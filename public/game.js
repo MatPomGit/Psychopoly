@@ -1284,8 +1284,6 @@ function checkBankruptcy(gs, player, creditorId) {
         if (!creditor.properties.includes(spaceId)) creditor.properties.push(spaceId);
       }
     });
-    // Remaining debt is forgiven (assets cover the shortfall)
-    creditor.money += 0;
   } else {
     player.properties.forEach(spaceId => {
       delete gs.properties[spaceId];
@@ -1322,7 +1320,8 @@ function openBuildModal(gs) {
     const ownsAll    = groupProps.every(s => gs.properties[s.id] && gs.properties[s.id].owner === player.id);
     if (!ownsAll) return;
 
-    const canBuild = !ps.hotel && player.money >= sp.houseCost;
+    const buildCost = ps.houses >= 4 ? sp.hotelCost : sp.houseCost;
+    const canBuild = !ps.hotel && player.money >= buildCost;
     const canSell  = ps.hotel || ps.houses > 0;
     const currentBuildings = ps.hotel ? '🏨 Hotel' : (ps.houses > 0 ? `🏠 ×${ps.houses}` : '(puste)');
 
@@ -1331,7 +1330,7 @@ function openBuildModal(gs) {
     card.innerHTML = `
       <div class="b-name">${sp.name}</div>
       <div class="b-current">${currentBuildings}</div>
-      <div class="b-cost">Koszt domu: ${sp.houseCost} zł</div>
+      <div class="b-cost">Koszt: ${buildCost} zł</div>
       <div style="display:flex;gap:4px;margin-top:6px">
         ${canBuild ? `<button class="btn btn-success btn-sm" data-action="build" data-id="${spaceId}">+🏠</button>` : ''}
         ${canSell  ? `<button class="btn btn-danger  btn-sm" data-action="sell"  data-id="${spaceId}">-🏠</button>` : ''}
@@ -1365,8 +1364,9 @@ function openBuildModal(gs) {
 function doBuildHouse(gs, player, spaceId) {
   const sp = BOARD_SPACES[spaceId];
   const ps = gs.properties[spaceId];
-  if (!sp || !ps || ps.mortgaged) return;
-  if (player.money < sp.houseCost) { showToast('Za mało pieniędzy!'); return; }
+  if (!sp || !ps || ps.mortgaged || ps.hotel) return;
+  const buildCost = ps.houses >= 4 ? sp.hotelCost : sp.houseCost;
+  if (player.money < buildCost) { showToast('Za mało pieniędzy!'); return; }
 
   const groupProps = BOARD_SPACES.filter(s => s.type === 'property' && s.group === sp.group);
   const ownsAll    = groupProps.every(s => gs.properties[s.id] && gs.properties[s.id].owner === player.id);
@@ -1380,7 +1380,7 @@ function doBuildHouse(gs, player, spaceId) {
   const curH = ps.hotel ? 5 : (ps.houses || 0);
   if (curH > minHouses) { showToast('Budujesz nierównomiernie!'); return; }
 
-  player.money -= sp.houseCost;
+  player.money -= buildCost;
 
   if (ps.houses >= 4) {
     ps.houses = 0;
@@ -1399,7 +1399,7 @@ function doSellHouse(gs, player, spaceId) {
   const ps = gs.properties[spaceId];
   if (!sp || !ps) return;
 
-  const sell = Math.floor(sp.houseCost / 2);
+  const sell = ps.hotel ? Math.floor(sp.hotelCost / 2) : Math.floor(sp.houseCost / 2);
   if (ps.hotel) {
     ps.hotel  = false;
     ps.houses = 4;
