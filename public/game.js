@@ -28,6 +28,7 @@ const STARTING_ENERGY = 50;
 const STARTING_ETHICS = 50;
 const CRITICAL_BURNOUT = 100;
 const MAX_ROUNDS = 12;
+const AI_CASH_BUFFER = 300;
 
 const DICE_FACES = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
 
@@ -98,6 +99,7 @@ let boardRotation = 0;
 let boardPanX = 0;
 let boardPanY = 0;
 let isDraggingBoard = false;
+let aiStepPending = false;
 let dragStartX = 0;
 let dragStartY = 0;
 let movedPlayersLastUpdate = [];
@@ -125,6 +127,12 @@ function showToast(msg, duration = 2800) {
 }
 
 function askPlayerChoice(message) {
+  if (localGame && gameMode === 'local') {
+    const cur = localGame.players[localGame.currentPlayerIndex];
+    if (cur && cur.isAI) {
+      return Math.random() < 0.5;
+    }
+  }
   if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
     return window.confirm(message);
   }
@@ -493,12 +501,14 @@ function setupLocalSetupHandlers() {
     const names = [];
     const colors = [];
     const pawns = [];
+    const aiFlags = [];
     let errMsg = '';
     const rows = document.querySelectorAll('#player-names-list .player-name-row');
     rows.forEach((row, i) => {
       const v = row.querySelector('input').value.trim();
       const selectedColor = row.dataset.color;
       const selectedPawn = row.dataset.pawn;
+      const isAI = row.dataset.isAi === 'true';
       if (!v) { errMsg = `Wpisz imię gracza ${i + 1}.`; return; }
       if (names.includes(v)) { errMsg = 'Imiona graczy muszą być różne.'; return; }
       if (colors.includes(selectedColor)) { errMsg = 'Kolory graczy muszą być różne.'; return; }
@@ -506,11 +516,12 @@ function setupLocalSetupHandlers() {
       names.push(v);
       colors.push(selectedColor);
       pawns.push(selectedPawn);
+      aiFlags.push(isAI);
     });
     document.getElementById('local-error').textContent = errMsg;
     if (errMsg || names.length !== localPlayerCount) return;
 
-    startLocalGame(names.map((n, i) => ({ name: n, color: colors[i], pawn: pawns[i] })));
+    startLocalGame(names.map((n, i) => ({ name: n, color: colors[i], pawn: pawns[i], isAI: aiFlags[i] })));
   });
 
   // Initial render
@@ -521,23 +532,51 @@ function renderPlayerNameInputs(count) {
   const container = document.getElementById('player-names-list');
   container.innerHTML = '';
   const defaults = ['Freud', 'Jung', 'Adler', 'Maslow'];
+  const aiDefaults = ['AI-Freud', 'AI-Jung', 'AI-Adler', 'AI-Maslow'];
   localSelections = Array.from({ length: count }, (_, i) => ({
     color: AVAILABLE_COLORS[i] || PLAYER_COLORS[i % PLAYER_COLORS.length],
     pawn: PAWN_OPTIONS[i % PAWN_OPTIONS.length].id,
+    isAI: false,
   }));
   for (let i = 0; i < count; i++) {
     const row = document.createElement('div');
     row.className = 'player-name-row';
     row.dataset.color = localSelections[i].color;
     row.dataset.pawn = localSelections[i].pawn;
+    row.dataset.isAi = 'false';
     row.innerHTML = `
       <div class="form-group" style="flex:1;margin:0">
-        <input type="text" placeholder="Gracz ${i + 1} (np. ${defaults[i]})" maxlength="20" value="${defaults[i]}">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">
+          <input type="text" class="player-name-input" placeholder="Gracz ${i + 1} (np. ${defaults[i]})" maxlength="20" value="${defaults[i]}">
+          <button type="button" class="ai-toggle-btn" title="Przełącz na gracza AI">🤖 AI</button>
+        </div>
         <div class="player-selection-row">
           <div class="token-select-list" data-role="pawn-list"></div>
           <div class="color-select-list" data-role="color-list"></div>
         </div>
       </div>`;
+    const nameInput = row.querySelector('.player-name-input');
+    const aiBtn = row.querySelector('.ai-toggle-btn');
+    aiBtn.addEventListener('click', () => {
+      const isAI = row.dataset.isAi !== 'true';
+      row.dataset.isAi = String(isAI);
+      localSelections[i].isAI = isAI;
+      if (isAI) {
+        aiBtn.classList.add('active');
+        row.classList.add('ai-player');
+        if (!nameInput.value.trim() || nameInput.value === defaults[i]) {
+          nameInput.value = aiDefaults[i];
+        }
+        nameInput.disabled = true;
+      } else {
+        aiBtn.classList.remove('active');
+        row.classList.remove('ai-player');
+        nameInput.disabled = false;
+        if (nameInput.value === aiDefaults[i]) {
+          nameInput.value = defaults[i];
+        }
+      }
+    });
     const pawnList = row.querySelector('[data-role="pawn-list"]');
     PAWN_OPTIONS.forEach(opt => {
       const btn = document.createElement('button');
@@ -786,6 +825,7 @@ function createGameState(playerConfigs) {
       name:               p.name,
       color:              p.color || PLAYER_COLORS[i],
       pawn:               p.pawn || PAWN_OPTIONS[i % PAWN_OPTIONS.length].id,
+      isAI:               p.isAI || false,
       money:              STARTING_MONEY,
       prestige:           STARTING_PRESTIGE,
       energy:             STARTING_ENERGY,
@@ -825,6 +865,7 @@ function startLocalGame(playerConfigs) {
   gameMode  = 'local';
   myPlayerId = 0;   // in local mode all players use same device
   localGame  = createGameState(playerConfigs);
+  aiStepPending = false;
   if (!boardRendered) { renderBoard(); boardRendered = true; }
   document.getElementById('chat-area').style.display = 'none';
   showScreen('screen-game');
@@ -1203,13 +1244,18 @@ function updateUI(gs) {
     setTimeout(() => showGameOver(gs), 600);
   }
 
+  const curPlayer = gs.players[gs.currentPlayerIndex];
+  const curIsAI = curPlayer && curPlayer.isAI && gameMode === 'local';
+
   if (gs.phase === 'buying' && gs.pendingBuy) {
-    openBuyModal(gs, gs.pendingBuy.spaceId);
+    if (!curIsAI) openBuyModal(gs, gs.pendingBuy.spaceId);
   }
 
   if (gs.phase === 'card' && gs.pendingCard) {
-    openCardModal(gs.pendingCard.card, gs.pendingCard.deck);
+    if (!curIsAI) openCardModal(gs.pendingCard.card, gs.pendingCard.deck);
   }
+
+  if (curIsAI) scheduleAiTurnIfNeeded(gs);
 }
 
 // ============================================================
@@ -1351,7 +1397,7 @@ function renderPlayersPanel(gs) {
     card.innerHTML = `
       <div class="player-card-header">
         <div class="player-token-sm" style="background:${player.color}; background-image:url('${getPawnIcon(player.pawn)}')">${getInitial(player.name)}</div>
-        <div class="player-name-label">${escHtml(player.name)}</div>
+        <div class="player-name-label">${escHtml(player.name)}${player.isAI ? '<span class="ai-badge">🤖 AI</span>' : ''}</div>
         <div class="player-money-label">${formatMoney(player.money)} · ⭐${player.prestige}</div>
       </div>
       <div class="player-status-row">${statusText} · 🔋${player.energy} ⚖️${player.ethics} 🔥${player.burnout} · Pole: ${player.position}</div>
@@ -1427,8 +1473,10 @@ function updateActionButtons(gs) {
   const cur = gs.players[gs.currentPlayerIndex];
   if (!cur) return;
 
-  // In online mode, only show interactive buttons when it's my turn
-  const myTurn = gameMode === 'local' || gs.currentPlayerIndex === myPlayerId;
+  // In online mode, only show interactive buttons when it's my turn.
+  // In local mode, hide interactive buttons when an AI player is acting.
+  const curIsAI = gameMode === 'local' && cur.isAI;
+  const myTurn = !curIsAI && (gameMode === 'local' || gs.currentPlayerIndex === myPlayerId);
 
   const phase = gs.phase;
 
@@ -1436,7 +1484,7 @@ function updateActionButtons(gs) {
   const banner = document.getElementById('current-player-banner');
   if (banner) {
     if (gameMode === 'local') {
-      banner.textContent = `Tura: ${cur.name}`;
+      banner.textContent = curIsAI ? `Tura: ${cur.name} 🤖` : `Tura: ${cur.name}`;
       banner.style.color = cur.color;
     } else {
       banner.textContent = myTurn ? `Twoja tura (${cur.name})` : `Tura: ${cur.name}`;
@@ -1445,7 +1493,13 @@ function updateActionButtons(gs) {
   }
 
   const phaseInfo = document.getElementById('phase-info');
-  if (phaseInfo) phaseInfo.textContent = PHASE_LABELS[phase] || phase;
+  if (phaseInfo) {
+    if (curIsAI) {
+      phaseInfo.innerHTML = `<span class="ai-thinking-indicator">🤖 AI myśli…</span>`;
+    } else {
+      phaseInfo.textContent = PHASE_LABELS[phase] || phase;
+    }
+  }
 
   // Roll
   const btnRoll = document.getElementById('btn-roll');
@@ -1979,6 +2033,79 @@ function doEndTurn(gs) {
 
   addLog(gs, `--- Tura gracza ${gs.players[next].name} ---`, true);
   playSfx('turn');
+}
+
+// ============================================================
+// AI PLAYER LOGIC
+// ============================================================
+
+/**
+ * Schedule an AI step if the current player is an AI.
+ * A 900 ms delay lets the human observer see the board state before
+ * the AI acts.  The flag `aiStepPending` prevents stacking callbacks.
+ */
+function scheduleAiTurnIfNeeded(gs) {
+  if (gameMode !== 'local' || !gs || gs.phase === 'end') return;
+  const cur = gs.players[gs.currentPlayerIndex];
+  if (!cur || cur.bankrupt || !cur.isAI) return;
+  if (aiStepPending) return;
+  aiStepPending = true;
+  setTimeout(() => {
+    aiStepPending = false;
+    if (!localGame || localGame.phase === 'end') return;
+    const player = localGame.players[localGame.currentPlayerIndex];
+    if (!player || !player.isAI) return;
+    aiStep(localGame);
+    updateUI(localGame);
+  }, 900);
+}
+
+/**
+ * Execute one AI decision based on the current game phase.
+ */
+function aiStep(gs) {
+  const player = gs.players[gs.currentPlayerIndex];
+  if (!player || !player.isAI || player.bankrupt) return;
+
+  switch (gs.phase) {
+    case 'rolling': {
+      if (player.inJail) {
+        if (player.getOutOfJailCards > 0) {
+          doUseJailCard(gs);
+        } else if (player.money >= JAIL_FINE &&
+                   (Math.random() < 0.5 || player.jailTurns >= MAX_JAIL_TURNS - 1)) {
+          doPayJail(gs);
+        } else {
+          doRoll(gs);
+        }
+      } else {
+        doRoll(gs);
+      }
+      break;
+    }
+    case 'buying': {
+      if (gs.pendingBuy) {
+        const space = BOARD_SPACES[gs.pendingBuy.spaceId];
+        // Buy when the player can afford it and keeps a cash buffer of 300 zł.
+        if (space && player.money >= space.price + AI_CASH_BUFFER) {
+          doBuy(gs);
+        } else {
+          doPassBuy(gs);
+        }
+      }
+      break;
+    }
+    case 'card': {
+      doCardOk(gs);
+      break;
+    }
+    case 'end-turn': {
+      doEndTurn(gs);
+      break;
+    }
+    default:
+      break;
+  }
 }
 
 // ============================================================
