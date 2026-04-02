@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Psychopoly — Psychologiczne Monopoly</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="public/style.css">
 </head>
 <body>
 
@@ -39,6 +39,7 @@
     </div>
 
     <div id="player-names-list"></div>
+    <p class="setup-help">Każdy gracz wybiera własne imię, pionek i kolor.</p>
 
     <div id="local-error" class="error-msg"></div>
 
@@ -62,6 +63,15 @@
         <label>Twoja nazwa gracza</label>
         <input type="text" id="online-player-name" maxlength="20" placeholder="Wpisz imię...">
       </div>
+      <div class="form-group">
+        <label>Twój pionek</label>
+        <div id="online-token-list" class="token-select-list"></div>
+      </div>
+      <div class="form-group">
+        <label>Twój kolor</label>
+        <div id="online-color-list" class="color-select-list"></div>
+      </div>
+      <div id="online-preview" class="online-preview-row"></div>
       <div class="setup-actions">
         <button id="btn-online-back" class="btn btn-outline">← Wstecz</button>
         <button id="btn-online-next" class="btn btn-primary">Dalej →</button>
@@ -89,6 +99,7 @@
       <div id="lobby-room-code"></div>
       <div id="lobby-status">Oczekiwanie na graczy…</div>
       <div id="lobby-players-list"></div>
+      <p class="setup-help">Host uruchomi grę, gdy wszyscy gracze będą gotowi.</p>
       <div id="online-error" class="error-msg"></div>
       <div class="setup-actions">
         <button id="btn-lobby-leave" class="btn btn-danger btn-sm">Opuść pokój</button>
@@ -257,7 +268,7 @@
 
 <!-- Scripts -->
 <script src="/socket.io/socket.io.js"></script>
-<script src="board-data.js"></script>
-<script src="game.js"></script>
+<script src="public/board-data.js"></script>
+<script src="public/game.js"></script>
 </body>
 </html>

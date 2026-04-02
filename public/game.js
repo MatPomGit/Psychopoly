@@ -9,6 +9,15 @@
 // CONSTANTS
 // ============================================================
 const PLAYER_COLORS    = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12'];
+const AVAILABLE_COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#f1c40f', '#1abc9c', '#ffffff'];
+const PAWN_OPTIONS = [
+  { id: 'brain',  name: 'Mózg',      icon: 'assets/pawns/brain.svg' },
+  { id: 'lamp',   name: 'Żarówka',   icon: 'assets/pawns/lamp.svg' },
+  { id: 'rocket', name: 'Rakieta',   icon: 'assets/pawns/rocket.svg' },
+  { id: 'star',   name: 'Gwiazda',   icon: 'assets/pawns/star.svg' },
+  { id: 'puzzle', name: 'Puzzle',    icon: 'assets/pawns/puzzle.svg' },
+  { id: 'book',   name: 'Książka',   icon: 'assets/pawns/book.svg' },
+];
 const STARTING_MONEY   = 1500;
 const GO_MONEY         = 200;
 const JAIL_POSITION    = 10;
@@ -34,9 +43,12 @@ let localGame    = null;   // full game state object (local mode)
 let socket       = null;
 let myPlayerId   = null;
 let myPlayerName = '';
+let myPlayerColor = PLAYER_COLORS[0];
+let myPlayerPawn = PAWN_OPTIONS[0].id;
 let currentRoomId = null;
 let isHost        = false;
 let boardRendered = false;
+let localSelections = [];
 
 // ============================================================
 // UTILITIES
@@ -64,6 +76,15 @@ function formatMoney(n) { return n + ' zł'; }
 function addLog(gs, msg, isTurn = false) {
   gs.log.unshift({ text: msg, isTurn });
   if (gs.log.length > 80) gs.log.pop();
+}
+
+function getPawnIcon(pawnId) {
+  const opt = PAWN_OPTIONS.find(p => p.id === pawnId);
+  return opt ? opt.icon : PAWN_OPTIONS[0].icon;
+}
+
+function getInitial(name = '') {
+  return (name.trim().charAt(0) || '?').toUpperCase();
 }
 
 // ============================================================
@@ -127,19 +148,27 @@ function setupLocalSetupHandlers() {
   });
 
   document.getElementById('btn-local-start').addEventListener('click', () => {
-    const rows = document.querySelectorAll('#player-names-list .player-name-row input');
     const names = [];
+    const colors = [];
+    const pawns = [];
     let errMsg = '';
-    rows.forEach((inp, i) => {
-      const v = inp.value.trim();
+    const rows = document.querySelectorAll('#player-names-list .player-name-row');
+    rows.forEach((row, i) => {
+      const v = row.querySelector('input').value.trim();
+      const selectedColor = row.dataset.color;
+      const selectedPawn = row.dataset.pawn;
       if (!v) { errMsg = `Wpisz imię gracza ${i + 1}.`; return; }
       if (names.includes(v)) { errMsg = 'Imiona graczy muszą być różne.'; return; }
+      if (colors.includes(selectedColor)) { errMsg = 'Kolory graczy muszą być różne.'; return; }
+      if (pawns.includes(selectedPawn)) { errMsg = 'Pionki graczy muszą być różne.'; return; }
       names.push(v);
+      colors.push(selectedColor);
+      pawns.push(selectedPawn);
     });
     document.getElementById('local-error').textContent = errMsg;
     if (errMsg || names.length !== localPlayerCount) return;
 
-    startLocalGame(names.map(n => ({ name: n })));
+    startLocalGame(names.map((n, i) => ({ name: n, color: colors[i], pawn: pawns[i] })));
   });
 
   // Initial render
@@ -150,14 +179,53 @@ function renderPlayerNameInputs(count) {
   const container = document.getElementById('player-names-list');
   container.innerHTML = '';
   const defaults = ['Freud', 'Jung', 'Adler', 'Maslow'];
+  localSelections = Array.from({ length: count }, (_, i) => ({
+    color: AVAILABLE_COLORS[i] || PLAYER_COLORS[i % PLAYER_COLORS.length],
+    pawn: PAWN_OPTIONS[i % PAWN_OPTIONS.length].id,
+  }));
   for (let i = 0; i < count; i++) {
     const row = document.createElement('div');
     row.className = 'player-name-row';
+    row.dataset.color = localSelections[i].color;
+    row.dataset.pawn = localSelections[i].pawn;
     row.innerHTML = `
-      <div class="player-color-dot" style="background:${PLAYER_COLORS[i]}"></div>
       <div class="form-group" style="flex:1;margin:0">
         <input type="text" placeholder="Gracz ${i + 1} (np. ${defaults[i]})" maxlength="20" value="${defaults[i]}">
+        <div class="player-selection-row">
+          <div class="token-select-list" data-role="pawn-list"></div>
+          <div class="color-select-list" data-role="color-list"></div>
+        </div>
       </div>`;
+    const pawnList = row.querySelector('[data-role="pawn-list"]');
+    PAWN_OPTIONS.forEach(opt => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `token-choice${opt.id === row.dataset.pawn ? ' active' : ''}`;
+      btn.title = opt.name;
+      btn.dataset.pawn = opt.id;
+      btn.innerHTML = `<img src="${opt.icon}" alt="${opt.name}">`;
+      btn.addEventListener('click', () => {
+        row.dataset.pawn = opt.id;
+        pawnList.querySelectorAll('.token-choice').forEach(el => el.classList.remove('active'));
+        btn.classList.add('active');
+      });
+      pawnList.appendChild(btn);
+    });
+    const colorList = row.querySelector('[data-role="color-list"]');
+    AVAILABLE_COLORS.forEach(color => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `color-choice${color === row.dataset.color ? ' active' : ''}`;
+      btn.style.background = color;
+      btn.dataset.color = color;
+      btn.title = color;
+      btn.addEventListener('click', () => {
+        row.dataset.color = color;
+        colorList.querySelectorAll('.color-choice').forEach(el => el.classList.remove('active'));
+        btn.classList.add('active');
+      });
+      colorList.appendChild(btn);
+    });
     container.appendChild(row);
   }
 }
@@ -166,6 +234,8 @@ function renderPlayerNameInputs(count) {
 // ONLINE LOBBY HANDLERS
 // ============================================================
 function setupOnlineLobbyHandlers() {
+  renderOnlineSelections();
+
   document.getElementById('btn-online-back').addEventListener('click', () => {
     showScreen('screen-menu');
   });
@@ -174,12 +244,20 @@ function setupOnlineLobbyHandlers() {
     const name = document.getElementById('online-player-name').value.trim();
     if (!name) { showToast('Wpisz swoje imię!'); return; }
     myPlayerName = name;
+    if (!myPlayerColor || !myPlayerPawn) {
+      showToast('Wybierz pionek i kolor.');
+      return;
+    }
     document.getElementById('lobby-step-name').style.display = 'none';
     document.getElementById('lobby-step-choose').style.display = 'block';
   });
+  document.getElementById('online-player-name').addEventListener('input', (e) => {
+    myPlayerName = e.target.value.trim();
+    previewSelection();
+  });
 
   document.getElementById('btn-create-room').addEventListener('click', () => {
-    if (socket) socket.emit('create-room', { playerName: myPlayerName });
+    if (socket) socket.emit('create-room', { playerName: myPlayerName, color: myPlayerColor, pawn: myPlayerPawn });
   });
 
   document.getElementById('btn-show-join').addEventListener('click', () => {
@@ -190,7 +268,7 @@ function setupOnlineLobbyHandlers() {
   document.getElementById('btn-join-room').addEventListener('click', () => {
     const code = document.getElementById('room-code-input').value.trim().toUpperCase();
     if (!code) { showToast('Wpisz kod pokoju!'); return; }
-    if (socket) socket.emit('join-room', { roomId: code, playerName: myPlayerName });
+    if (socket) socket.emit('join-room', { roomId: code, playerName: myPlayerName, color: myPlayerColor, pawn: myPlayerPawn });
   });
 
   document.getElementById('btn-lobby-back2').addEventListener('click', () => {
@@ -210,12 +288,62 @@ function setupOnlineLobbyHandlers() {
   });
 }
 
+function renderOnlineSelections() {
+  const tokenList = document.getElementById('online-token-list');
+  const colorList = document.getElementById('online-color-list');
+  const preview = document.getElementById('online-preview');
+  tokenList.innerHTML = '';
+  colorList.innerHTML = '';
+
+  PAWN_OPTIONS.forEach((opt, i) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `token-choice${i === 0 ? ' active' : ''}`;
+    btn.innerHTML = `<img src="${opt.icon}" alt="${opt.name}">`;
+    btn.title = opt.name;
+    btn.addEventListener('click', () => {
+      myPlayerPawn = opt.id;
+      tokenList.querySelectorAll('.token-choice').forEach(el => el.classList.remove('active'));
+      btn.classList.add('active');
+      previewSelection();
+    });
+    tokenList.appendChild(btn);
+  });
+
+  AVAILABLE_COLORS.forEach((color, i) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `color-choice${i === 0 ? ' active' : ''}`;
+    btn.style.background = color;
+    btn.addEventListener('click', () => {
+      myPlayerColor = color;
+      colorList.querySelectorAll('.color-choice').forEach(el => el.classList.remove('active'));
+      btn.classList.add('active');
+      previewSelection();
+    });
+    colorList.appendChild(btn);
+  });
+
+  previewSelection();
+}
+
+function previewSelection() {
+  const preview = document.getElementById('online-preview');
+  if (!preview) return;
+  preview.innerHTML = `<span>Podgląd: </span>
+    <span class="player-token-sm" style="background:${myPlayerColor}; background-image:url('${getPawnIcon(myPlayerPawn)}');">${getInitial(myPlayerName)}</span>`;
+}
+
 function resetLobbyUI() {
   document.getElementById('lobby-step-name').style.display = 'block';
   document.getElementById('lobby-step-choose').style.display = 'none';
   document.getElementById('lobby-step-waiting').style.display = 'none';
   document.getElementById('online-player-name').value = '';
   document.getElementById('online-error').textContent = '';
+  myPlayerName = '';
+  myPlayerColor = AVAILABLE_COLORS[0];
+  myPlayerPawn = PAWN_OPTIONS[0].id;
+  renderOnlineSelections();
 }
 
 // ============================================================
@@ -223,6 +351,10 @@ function resetLobbyUI() {
 // ============================================================
 function initSocket() {
   if (socket) return;
+  if (typeof io !== 'function') {
+    showToast('Tryb online jest niedostępny bez serwera Socket.io.');
+    return;
+  }
   socket = io();
 
   socket.on('connect', () => {
@@ -290,7 +422,7 @@ function renderLobbyPlayers(players) {
     const row = document.createElement('div');
     row.className = 'lobby-player-row';
     row.innerHTML = `
-      <div class="player-color-dot" style="background:${PLAYER_COLORS[p.playerId]}"></div>
+      <div class="player-token-sm" style="background:${p.color}; background-image:url('${getPawnIcon(p.pawn)}')">${getInitial(p.name)}</div>
       <span>${p.name}${p.playerId === myPlayerId ? ' (Ty)' : ''}</span>`;
     list.appendChild(row);
   });
@@ -304,7 +436,8 @@ function createGameState(playerConfigs) {
     players: playerConfigs.map((p, i) => ({
       id:                 i,
       name:               p.name,
-      color:              PLAYER_COLORS[i],
+      color:              p.color || PLAYER_COLORS[i],
+      pawn:               p.pawn || PAWN_OPTIONS[i % PAWN_OPTIONS.length].id,
       money:              STARTING_MONEY,
       position:           0,
       inJail:             false,
@@ -629,7 +762,8 @@ function renderTokens(gs) {
     const token = document.createElement('div');
     token.className = 'player-token';
     token.style.backgroundColor = player.color;
-    token.textContent = player.name.charAt(0).toUpperCase();
+    token.style.backgroundImage = `url('${getPawnIcon(player.pawn)}')`;
+    token.textContent = getInitial(player.name);
     token.title = `${player.name} — ${player.money} zł`;
     layer.appendChild(token);
   });
@@ -665,7 +799,8 @@ function renderOwnershipRings(gs) {
     const ps = gs.properties[space.id];
     if (ps) {
       el.classList.add('space-owned');
-      el.style.boxShadow = `inset 0 0 0 2px ${PLAYER_COLORS[ps.owner]}`;
+      const ownerColor = gs.players[ps.owner] ? gs.players[ps.owner].color : PLAYER_COLORS[ps.owner];
+      el.style.boxShadow = `inset 0 0 0 2px ${ownerColor}`;
       el.classList.toggle('space-mortgaged', ps.mortgaged);
     } else {
       el.classList.remove('space-owned', 'space-mortgaged');
@@ -734,7 +869,7 @@ function renderPlayersPanel(gs) {
 
     card.innerHTML = `
       <div class="player-card-header">
-        <div class="player-token-sm" style="background:${player.color}">${player.name.charAt(0).toUpperCase()}</div>
+        <div class="player-token-sm" style="background:${player.color}; background-image:url('${getPawnIcon(player.pawn)}')">${getInitial(player.name)}</div>
         <div class="player-name-label">${escHtml(player.name)}</div>
         <div class="player-money-label">${formatMoney(player.money)}</div>
       </div>
@@ -1577,7 +1712,7 @@ function showGameOver(gs) {
     const div = document.createElement('div');
     div.className = 'gameover-player';
     div.innerHTML = `
-      <div class="player-token-sm" style="background:${p.color}">${p.name.charAt(0).toUpperCase()}</div>
+      <div class="player-token-sm" style="background:${p.color}; background-image:url('${getPawnIcon(p.pawn)}')">${getInitial(p.name)}</div>
       <div class="gameover-player-name">${escHtml(p.name)}${p.bankrupt ? ' 💀' : ''}</div>
       <div class="gameover-player-money">${formatMoney(p.money)}</div>`;
     final.appendChild(div);
