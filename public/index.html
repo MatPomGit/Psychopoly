@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Psychopoly — Psychologiczne Monopoly</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ============================================================
+     SCREEN: MAIN MENU
+     ============================================================ -->
+<div id="screen-menu" class="screen active">
+  <div class="menu-logo">
+    <h1>Psychopoly</h1>
+    <p>Psychologiczne Monopoly — odkryj umysł przez grę</p>
+  </div>
+  <div class="menu-buttons">
+    <button id="btn-local"  class="btn btn-primary  btn-lg btn-full">🧠 Graj Lokalnie</button>
+    <button id="btn-online" class="btn btn-secondary btn-lg btn-full">🌐 Graj Online</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     SCREEN: LOCAL SETUP
+     ============================================================ -->
+<div id="screen-local-setup" class="screen">
+  <div class="setup-card">
+    <h2>Gra Lokalna</h2>
+
+    <div class="form-group">
+      <label>Liczba graczy</label>
+      <div class="player-count-btns">
+        <button class="btn btn-outline pc-btn active" data-count="2">2</button>
+        <button class="btn btn-outline pc-btn" data-count="3">3</button>
+        <button class="btn btn-outline pc-btn" data-count="4">4</button>
+      </div>
+    </div>
+
+    <div id="player-names-list"></div>
+
+    <div id="local-error" class="error-msg"></div>
+
+    <div class="setup-actions">
+      <button id="btn-local-back" class="btn btn-outline">← Wstecz</button>
+      <button id="btn-local-start" class="btn btn-success btn-lg">Rozpocznij grę</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     SCREEN: ONLINE LOBBY
+     ============================================================ -->
+<div id="screen-online-lobby" class="screen">
+  <div class="setup-card">
+    <h2>Gra Online</h2>
+
+    <!-- Step 1: enter name -->
+    <div id="lobby-step-name">
+      <div class="form-group">
+        <label>Twoja nazwa gracza</label>
+        <input type="text" id="online-player-name" maxlength="20" placeholder="Wpisz imię...">
+      </div>
+      <div class="setup-actions">
+        <button id="btn-online-back" class="btn btn-outline">← Wstecz</button>
+        <button id="btn-online-next" class="btn btn-primary">Dalej →</button>
+      </div>
+    </div>
+
+    <!-- Step 2: create or join -->
+    <div id="lobby-step-choose" style="display:none">
+      <div class="setup-actions" style="margin-bottom:12px">
+        <button id="btn-create-room" class="btn btn-success">➕ Stwórz pokój</button>
+        <button id="btn-show-join"   class="btn btn-secondary">🔑 Dołącz do pokoju</button>
+      </div>
+      <div id="lobby-join-row" style="display:none; margin-bottom:12px">
+        <div class="form-group">
+          <label>Kod pokoju</label>
+          <input type="text" id="room-code-input" maxlength="8" placeholder="Np. A1B2C3" style="text-transform:uppercase">
+        </div>
+        <button id="btn-join-room" class="btn btn-primary btn-full">Dołącz</button>
+      </div>
+      <button id="btn-lobby-back2" class="btn btn-outline btn-sm">← Wstecz</button>
+    </div>
+
+    <!-- Step 3: waiting room -->
+    <div id="lobby-step-waiting" style="display:none">
+      <div id="lobby-room-code"></div>
+      <div id="lobby-status">Oczekiwanie na graczy…</div>
+      <div id="lobby-players-list"></div>
+      <div id="online-error" class="error-msg"></div>
+      <div class="setup-actions">
+        <button id="btn-lobby-leave" class="btn btn-danger btn-sm">Opuść pokój</button>
+        <button id="btn-lobby-start" class="btn btn-success" style="display:none">▶ Rozpocznij grę</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     SCREEN: GAME BOARD
+     ============================================================ -->
+<div id="screen-game" class="screen">
+
+  <!-- Board area -->
+  <div id="board-area">
+    <div id="board"></div>
+  </div>
+
+  <!-- Side panel -->
+  <div id="side-panel">
+    <div id="panel-tabs">
+      <button class="tab-btn active" data-tab="actions">Akcje</button>
+      <button class="tab-btn" data-tab="players">Gracze</button>
+      <button class="tab-btn" data-tab="props">Własności</button>
+      <button class="tab-btn" data-tab="log">Dziennik</button>
+    </div>
+
+    <!-- Actions tab -->
+    <div id="actions-content" class="panel-content active">
+      <div id="current-player-banner" style="background:rgba(26,188,156,.1);border-radius:6px;padding:8px 10px;font-size:.82rem;font-weight:700;color:#1abc9c;text-align:center;"></div>
+
+      <div id="dice-area" class="dice-display" style="justify-content:center;margin:4px 0">
+        <div class="die" id="die1">?</div>
+        <div class="die" id="die2">?</div>
+      </div>
+
+      <div class="action-section">
+        <div class="action-section-title">Rzut / Ruch</div>
+        <button id="btn-roll"      class="btn btn-primary  btn-full">🎲 Rzuć kostkami</button>
+        <button id="btn-pay-jail"  class="btn btn-warning  btn-full" style="display:none">💸 Zapłać karę (50 zł)</button>
+        <button id="btn-jail-card" class="btn btn-outline  btn-full" style="display:none">🎫 Użyj karty wolności</button>
+      </div>
+
+      <div class="action-section">
+        <div class="action-section-title">Zarządzanie</div>
+        <button id="btn-build"    class="btn btn-success  btn-full" style="display:none">🏠 Buduj / Sprzedaj</button>
+        <button id="btn-mortgage" class="btn btn-warning  btn-full" style="display:none">📋 Zastaw / Odkup</button>
+      </div>
+
+      <div class="action-section">
+        <div class="action-section-title">Koniec tury</div>
+        <button id="btn-end-turn" class="btn btn-secondary btn-full" disabled>✔ Zakończ turę</button>
+      </div>
+
+      <div id="phase-info" style="font-size:.75rem;opacity:.55;text-align:center;margin-top:4px;"></div>
+    </div>
+
+    <!-- Players tab -->
+    <div id="players-content" class="panel-content">
+      <div id="players-list-panel"></div>
+    </div>
+
+    <!-- Properties tab -->
+    <div id="props-content" class="panel-content">
+      <div id="properties-panel"></div>
+    </div>
+
+    <!-- Log tab -->
+    <div id="log-content" class="panel-content">
+      <div id="log-list"></div>
+    </div>
+
+    <!-- Chat (online only) -->
+    <div id="chat-area" style="display:none">
+      <div id="chat-messages"></div>
+      <div id="chat-input-row">
+        <input type="text" id="chat-input" placeholder="Napisz wiadomość…" maxlength="200">
+        <button id="chat-send" class="btn btn-primary btn-sm">➤</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     SCREEN: GAME OVER
+     ============================================================ -->
+<div id="screen-game-over" class="screen">
+  <div class="gameover-trophy">🏆</div>
+  <div class="gameover-title">Gra zakończona! Zwycięzca:</div>
+  <div id="gameover-winner-name" class="gameover-winner"></div>
+  <div id="gameover-final" class="gameover-final"></div>
+  <button id="btn-play-again" class="btn btn-primary btn-lg">🔄 Zagraj ponownie</button>
+</div>
+
+<!-- ============================================================
+     MODAL: Card drawn
+     ============================================================ -->
+<div id="modal-card" class="modal-overlay">
+  <div class="modal-box">
+    <div id="modal-card-deck" class="card-modal-deck"></div>
+    <div id="modal-card-icon" class="card-icon"></div>
+    <div id="modal-card-text" class="card-text"></div>
+    <div class="modal-actions" style="margin-top:20px">
+      <button id="btn-card-ok" class="btn btn-primary btn-full">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     MODAL: Buy property
+     ============================================================ -->
+<div id="modal-buy" class="modal-overlay">
+  <div class="modal-box" style="padding-top:38px">
+    <div id="modal-buy-colorbar" class="buy-color-bar"></div>
+    <div class="modal-title" id="modal-buy-name"></div>
+    <div class="modal-body">
+      <div id="modal-buy-price" class="buy-modal-price"></div>
+      <table class="buy-modal-rent-table" id="modal-buy-rent-table">
+        <thead><tr><th>Czynsz</th><th>Kwota</th></tr></thead>
+        <tbody id="modal-buy-rent-rows"></tbody>
+      </table>
+      <div id="modal-buy-balance" style="font-size:.88rem;color:#666;margin-top:6px"></div>
+    </div>
+    <div class="modal-actions">
+      <button id="btn-buy-pass" class="btn btn-secondary">Pomiń</button>
+      <button id="btn-buy-confirm" class="btn btn-success">💰 Kup!</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     MODAL: Build / Sell houses
+     ============================================================ -->
+<div id="modal-build" class="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-title">🏠 Buduj / Sprzedaj</div>
+    <div class="modal-body" style="margin-bottom:10px">
+      <div id="build-grid-container" class="build-grid"></div>
+    </div>
+    <div class="modal-actions">
+      <button id="btn-build-close" class="btn btn-secondary btn-full">Zamknij</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     MODAL: Mortgage / Unmortgage
+     ============================================================ -->
+<div id="modal-mortgage" class="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-title">📋 Zastaw / Odkup</div>
+    <div class="modal-body" style="margin-bottom:10px">
+      <div id="mortgage-list" class="mortgage-list"></div>
+    </div>
+    <div class="modal-actions">
+      <button id="btn-mortgage-close" class="btn btn-secondary btn-full">Zamknij</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     TOAST
+     ============================================================ -->
+<div id="toast-container"></div>
+
+<!-- Scripts -->
+<script src="/socket.io/socket.io.js"></script>
+<script src="board-data.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
