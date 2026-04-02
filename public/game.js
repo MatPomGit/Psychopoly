@@ -20,18 +20,23 @@ const PAWN_OPTIONS = [
 ];
 const STARTING_MONEY   = 1500;
 const GO_MONEY         = 200;
-const JAIL_POSITION    = 10;
+const JAIL_POSITION    = 14;
 const JAIL_FINE        = 50;
 const MAX_JAIL_TURNS   = 3;
+const STARTING_PRESTIGE = 10;
+const STARTING_ENERGY = 50;
+const STARTING_ETHICS = 50;
+const CRITICAL_BURNOUT = 100;
+const MAX_ROUNDS = 12;
 
 const DICE_FACES = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
 
 const PHASE_LABELS = {
   rolling:   'Rzuć kostkami',
-  buying:    'Kup lub pomiń własność',
+  buying:    'Kup lub pomiń aktywo',
   card:      'Ciągniesz kartę…',
   'end-turn':'Zakończ turę',
-  jailed:    'Jesteś w Izolacji',
+  jailed:    'Jesteś w stanie kryzysu',
   end:       'Koniec gry',
 };
 
@@ -119,7 +124,43 @@ function showToast(msg, duration = 2800) {
   setTimeout(() => el.remove(), duration);
 }
 
+function askPlayerChoice(message) {
+  if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+    return window.confirm(message);
+  }
+  return false;
+}
+
 function formatMoney(n) { return n + ' zł'; }
+function clampStat(value, min = 0, max = 100) { return Math.max(min, Math.min(max, value)); }
+
+function getPrestigeScore(player) {
+  return player.money + (player.prestige * 12) + (player.energy * 8) + (player.ethics * 8) - (player.burnout * 10);
+}
+
+function applyPlayerDelta(gs, player, delta = {}, reason = '') {
+  if (!player || player.bankrupt) return;
+  const entries = [
+    ['money', 'zł'],
+    ['prestige', 'prestige'],
+    ['energy', 'energia'],
+    ['ethics', 'etyka'],
+    ['burnout', 'wypalenie'],
+  ];
+  const summary = [];
+  entries.forEach(([key, label]) => {
+    const change = delta[key];
+    if (!change) return;
+    if (key === 'money') player.money += change;
+    if (key === 'prestige') player.prestige = clampStat(player.prestige + change);
+    if (key === 'energy') player.energy = clampStat(player.energy + change);
+    if (key === 'ethics') player.ethics = clampStat(player.ethics + change);
+    if (key === 'burnout') player.burnout = clampStat(player.burnout + change);
+    summary.push(`${change > 0 ? '+' : ''}${change} ${label}`);
+  });
+  if (delta.supervision) player.supervisionShield += delta.supervision;
+  if (summary.length) addLog(gs, `${player.name}: ${summary.join(', ')}${reason ? ` (${reason})` : ''}.`);
+}
 
 function addLog(gs, msg, isTurn = false) {
   gs.log.unshift({ text: msg, isTurn });
@@ -746,6 +787,11 @@ function createGameState(playerConfigs) {
       color:              p.color || PLAYER_COLORS[i],
       pawn:               p.pawn || PAWN_OPTIONS[i % PAWN_OPTIONS.length].id,
       money:              STARTING_MONEY,
+      prestige:           STARTING_PRESTIGE,
+      energy:             STARTING_ENERGY,
+      ethics:             STARTING_ETHICS,
+      burnout:            0,
+      supervisionShield:  0,
       position:           0,
       inJail:             false,
       jailTurns:          0,
@@ -759,6 +805,7 @@ function createGameState(playerConfigs) {
     dice:            [0, 0],
     doubles:         0,
     turn:            0,
+    roundsCompleted: 0,
     insightCards:    shuffleArray([...INSIGHT_CARDS]),
     sessionCards:    shuffleArray([...SESSION_CARDS]),
     insightDiscard:  [],
@@ -1111,7 +1158,7 @@ function animateBoardFocus(fromSpaceId, toSpaceId) {
 function animateCardDraw(deck) {
   const fx = document.getElementById('card-draw-fx');
   if (!fx) return;
-  fx.textContent = deck === 'insight' ? '🟧 Karta Wglądu' : '🟦 Karta Sesji';
+  fx.textContent = deck === 'insight' ? '🟧 Karta Szansy' : '🟦 Karta Społeczności';
   fx.classList.remove('playing');
   void fx.offsetWidth;
   fx.classList.add('playing');
@@ -1197,13 +1244,13 @@ function renderBuildingIndicators(gs) {
     if (propState.hotel) {
       const dot = document.createElement('div');
       dot.className = 'hotel-dot';
-      dot.title = 'Hotel';
+      dot.title = 'Pełna specjalizacja';
       indEl.appendChild(dot);
     } else if (propState.houses > 0) {
       for (let i = 0; i < propState.houses; i++) {
         const dot = document.createElement('div');
         dot.className = 'house-dot';
-        dot.title = `${propState.houses} dom(y)`;
+        dot.title = `${propState.houses} certyfikat(y)`;
         indEl.appendChild(dot);
       }
     }
@@ -1254,7 +1301,12 @@ function updateCenterInfo(gs) {
     const ownedCount = (cur.properties || []).length;
     turnStats.innerHTML = `
       <div class="turn-stats-row"><span>💰 Gotówka</span><strong>${formatMoney(cur.money)}</strong></div>
+      <div class="turn-stats-row"><span>⭐ Prestiż</span><strong>${cur.prestige}</strong></div>
+      <div class="turn-stats-row"><span>🔋 Energia</span><strong>${cur.energy}</strong></div>
+      <div class="turn-stats-row"><span>⚖️ Etyka</span><strong>${cur.ethics}</strong></div>
+      <div class="turn-stats-row"><span>🔥 Wypalenie</span><strong>${cur.burnout}</strong></div>
       <div class="turn-stats-row"><span>🧾 Własności</span><strong>${ownedCount}</strong></div>
+      <div class="turn-stats-row"><span>🛡️ Superwizja</span><strong>${cur.supervisionShield}</strong></div>
       <div class="turn-stats-row"><span>🎫 Karty</span><strong>${cardCount}</strong></div>
     `;
   }
@@ -1292,7 +1344,7 @@ function renderPlayersPanel(gs) {
       return `<span class="prop-mini-dot" style="background:${color}" title="${sp ? sp.name : spaceId}"></span>`;
     }).join('');
 
-    const statusText = player.bankrupt ? '💀 BANKRUT' :
+    const statusText = player.bankrupt ? '💀 ODPADŁ' :
                        player.inJail   ? `🔒 Izolacja (${player.jailTurns}/${MAX_JAIL_TURNS})` :
                        player.getOutOfJailCards > 0 ? `🎫 ×${player.getOutOfJailCards}` : '';
 
@@ -1300,9 +1352,9 @@ function renderPlayersPanel(gs) {
       <div class="player-card-header">
         <div class="player-token-sm" style="background:${player.color}; background-image:url('${getPawnIcon(player.pawn)}')">${getInitial(player.name)}</div>
         <div class="player-name-label">${escHtml(player.name)}</div>
-        <div class="player-money-label">${formatMoney(player.money)}</div>
+        <div class="player-money-label">${formatMoney(player.money)} · ⭐${player.prestige}</div>
       </div>
-      <div class="player-status-row">${statusText} · Pole: ${player.position}</div>
+      <div class="player-status-row">${statusText} · 🔋${player.energy} ⚖️${player.ethics} 🔥${player.burnout} · Pole: ${player.position}</div>
       <div class="player-props-mini">${propDots}</div>`;
     list.appendChild(card);
   });
@@ -1509,9 +1561,9 @@ function doMove(gs, player, steps) {
   const newPos = (player.position + steps) % 40;
   // newPos < oldPos iff (oldPos + steps) >= 40 for dice values, so one condition suffices
   if (newPos < oldPos) {
-    player.money += GO_MONEY;
-    addLog(gs, `${player.name} przeszedł przez START — otrzymuje ${GO_MONEY} zł!`);
-    showToast(`${player.name} przeszedł przez START! +${GO_MONEY} zł`);
+    applyPlayerDelta(gs, player, { money: GO_MONEY, prestige: 2, energy: 1 }, 'START');
+    addLog(gs, `${player.name} przeszedł przez START — bonus miesięczny (+${GO_MONEY} zł, +2 prestiżu, +1 energii).`);
+    showToast(`${player.name} przeszedł przez START! +${GO_MONEY} zł / +2⭐ / +1🔋`);
   }
   player.position = newPos;
   playSfx('move');
@@ -1534,9 +1586,15 @@ function handleLanding(gs, player) {
       handlePropertyLanding(gs, player, space);
       break;
     case 'tax':
-      player.money -= space.amount;
-      addLog(gs, `${player.name} zapłacił podatek: ${space.amount} zł.`);
-      showToast(`Podatek: -${space.amount} zł`);
+      if (space.id === 39) {
+        applyPlayerDelta(gs, player, { money: -space.amount, energy: 10, ethics: 8, burnout: -8 }, space.name);
+        addLog(gs, `${player.name} inwestuje w regenerację: -${space.amount} zł, ale odzyskuje zasoby.`);
+        showToast('Terapia własna: -100 zł, +energia, +etyka');
+      } else {
+        applyPlayerDelta(gs, player, { money: -space.amount, energy: -2 }, space.name);
+        addLog(gs, `${player.name} zapłacił koszt systemowy: ${space.amount} zł.`);
+        showToast(`Opłata: -${space.amount} zł`);
+      }
       checkBankruptcy(gs, player, null);
       gs.phase = 'end-turn';
       break;
@@ -1544,7 +1602,7 @@ function handleLanding(gs, player) {
       doDrawCard(gs, player, space.deck);
       break;
     case 'jail':
-      addLog(gs, `${player.name} odwiedził Izolację.`);
+      addLog(gs, `${player.name} ma przystanek: ${space.name}.`);
       gs.phase = 'end-turn';
       break;
     case 'gotojail':
@@ -1575,6 +1633,7 @@ function handlePropertyLanding(gs, player, space) {
     }
   } else if (propState.owner === player.id) {
     addLog(gs, `${player.name} wylądował na swojej własności.`);
+    applyPlayerDelta(gs, player, { burnout: -1 }, 'spokojniejsza tura');
     gs.phase = 'end-turn';
   } else if (propState.mortgaged) {
     addLog(gs, `${space.name} jest zastawiona — brak czynszu.`);
@@ -1583,8 +1642,8 @@ function handlePropertyLanding(gs, player, space) {
     const owner = gs.players[propState.owner];
     if (owner && !owner.bankrupt) {
       const rent = calculateRent(gs, space, propState);
-      player.money -= rent;
-      owner.money  += rent;
+      applyPlayerDelta(gs, player, { money: -rent, energy: -4, burnout: 3 }, 'czynsz i obciążenie');
+      applyPlayerDelta(gs, owner, { money: rent, prestige: 1, energy: -1 }, 'obsługa kolejnego klienta');
       addLog(gs, `${player.name} zapłacił ${rent} zł czynszu graczowi ${owner.name}.`);
       showToast(`Czynsz: -${rent} zł → ${owner.name}`);
       playSfx('rent');
@@ -1622,6 +1681,7 @@ function sendToJail(gs, player) {
   player.position  = JAIL_POSITION;
   player.inJail    = true;
   player.jailTurns = 0;
+  applyPlayerDelta(gs, player, { energy: -10, burnout: 10, prestige: -4 }, 'kryzys zawodowy');
   addLog(gs, `${player.name} trafia do Izolacji!`);
   showToast(`${player.name} trafia do Izolacji! 🔒`);
   playSfx('jail');
@@ -1649,7 +1709,7 @@ function doDrawCard(gs, player, deck) {
     if (card.action !== 'get-out-jail') gs.sessionDiscard.push(card);
   }
 
-  addLog(gs, `${player.name} ciągnie kartę ${deck === 'insight' ? 'Wglądu' : 'Sesji'}: "${card.text}"`);
+  addLog(gs, `${player.name} ciągnie kartę ${deck === 'insight' ? 'Szansy' : 'Społeczności'}: "${card.text}"`);
   playSfx('card');
   gs.phase       = 'card';
   gs.pendingCard = { card, deck, playerId: player.id };
@@ -1665,12 +1725,87 @@ function doCardOk(gs) {
 
 function applyCardEffect(gs, player, card) {
   switch (card.action) {
+    case 'resource':
+      applyPlayerDelta(gs, player, {
+        money: card.money || 0,
+        prestige: card.prestige || 0,
+        energy: card.energy || 0,
+        ethics: card.ethics || 0,
+        burnout: card.burnout || 0,
+        supervision: card.supervision || 0,
+      }, 'karta');
+      if (card.ethicsIfNoShield && player.supervisionShield <= 0) {
+        applyPlayerDelta(gs, player, { ethics: card.ethicsIfNoShield }, 'brak superwizji');
+      }
+      break;
+    case 'choice-course':
+      if (player.money >= 300) {
+        applyPlayerDelta(gs, player, { money: -300, prestige: 10, energy: -2 }, 'kurs');
+      } else {
+        applyPlayerDelta(gs, player, { prestige: -2 }, 'odrzucony kurs');
+      }
+      break;
+    case 'choice-trend':
+      if (player.ethics >= 35) {
+        applyPlayerDelta(gs, player, { prestige: 8, ethics: -4 }, 'trend terapeutyczny');
+      } else {
+        addLog(gs, `${player.name} ignoruje trend i zachowuje status quo.`);
+      }
+      break;
+    case 'choice-rest': {
+      const rest = askPlayerChoice(
+        'Długi weekend bez pacjentów: OK = odpoczynek (-100 zł, +10 energii), Anuluj = nadrabianie (+120 zł, -8 energii, +6 wypalenia).'
+      );
+      if (rest) applyPlayerDelta(gs, player, { money: -100, energy: 10 }, 'odpoczynek');
+      else applyPlayerDelta(gs, player, { money: 120, energy: -8, burnout: 6 }, 'nadrabianie grafiku');
+      break;
+    }
+    case 'choice-boundary': {
+      const clarify = askPlayerChoice(
+        'Mylenie psychologa z psychiatrą: OK = spokojnie wyjaśniasz (+1 etyki), Anuluj = tracisz cierpliwość (-3 energii).'
+      );
+      if (clarify) applyPlayerDelta(gs, player, { ethics: 1 }, 'wyjaśnienie roli');
+      else applyPlayerDelta(gs, player, { energy: -3 }, 'frustracja');
+      break;
+    }
+    case 'choice-pricing': {
+      const keepPrestige = askPlayerChoice(
+        'Zaniżanie cen przez konkurencję: OK = bronisz stawki (-100 zł), Anuluj = tniesz ceny (-5 prestiżu).'
+      );
+      if (keepPrestige) applyPlayerDelta(gs, player, { money: -100 }, 'utrzymanie stawek');
+      else applyPlayerDelta(gs, player, { prestige: -5 }, 'obniżka cen');
+      break;
+    }
+    case 'choice-gossip': {
+      const ignore = askPlayerChoice(
+        'Plotki środowiskowe: OK = ignorujesz (-5 prestiżu), Anuluj = angażujesz się (-5 energii).'
+      );
+      if (ignore) applyPlayerDelta(gs, player, { prestige: -5 }, 'plotki środowiskowe');
+      else applyPlayerDelta(gs, player, { energy: -5 }, 'dyskusje środowiskowe');
+      break;
+    }
+    case 'choice-pricing-lite': {
+      const payCash = askPlayerChoice(
+        'Dyskusja o stawkach: OK = płacisz kosztem finansowym (-50 zł), Anuluj = kosztem energii (-5 energii).'
+      );
+      if (payCash) applyPlayerDelta(gs, player, { money: -50 }, 'kompromis finansowy');
+      else applyPlayerDelta(gs, player, { energy: -5 }, 'koszt emocjonalny');
+      break;
+    }
+    case 'choice-boundary-hard': {
+      const holdLine = askPlayerChoice(
+        'Pacjent testuje granice: OK = bronisz granic (-5 energii), Anuluj = odpuszczasz (-3 etyki).'
+      );
+      if (holdLine) applyPlayerDelta(gs, player, { energy: -5, ethics: 1 }, 'utrzymanie granic');
+      else applyPlayerDelta(gs, player, { ethics: -3 }, 'rozmycie granic');
+      break;
+    }
     case 'collect':
-      player.money += card.amount;
+      applyPlayerDelta(gs, player, { money: card.amount }, 'karta');
       addLog(gs, `${player.name} otrzymuje ${card.amount} zł.`);
       break;
     case 'pay':
-      player.money -= card.amount;
+      applyPlayerDelta(gs, player, { money: -card.amount }, 'karta');
       addLog(gs, `${player.name} płaci ${card.amount} zł.`);
       checkBankruptcy(gs, player, null);
       break;
@@ -1715,8 +1850,8 @@ function applyCardEffect(gs, player, card) {
         if (p.id !== player.id && !p.bankrupt) {
           // Only collect what the other player can actually pay (non-negative)
           const amt = Math.min(card.amount, Math.max(0, p.money));
-          p.money     -= amt;
-          player.money += amt;
+          applyPlayerDelta(gs, p, { money: -amt }, 'karta');
+          applyPlayerDelta(gs, player, { money: amt }, 'karta');
         }
       });
       addLog(gs, `${player.name} otrzymuje ${card.amount} zł od każdego gracza.`);
@@ -1752,7 +1887,7 @@ function doBuy(gs) {
 
   if (!space || !player || player.money < space.price) return;
 
-  player.money -= space.price;
+  applyPlayerDelta(gs, player, { money: -space.price, prestige: 2, energy: -3, burnout: 2 }, 'zakup aktywa');
   gs.properties[spaceId] = { owner: player.id, houses: 0, hotel: false, mortgaged: false };
   if (!player.properties.includes(spaceId)) player.properties.push(spaceId);
 
@@ -1801,9 +1936,10 @@ function doUseJailCard(gs) {
 function doEndTurn(gs) {
   if (gs.phase !== 'end-turn') return;
   const cur = gs.players[gs.currentPlayerIndex];
+  checkPlayerVitalStatus(gs, cur);
 
   // Double = roll again
-  if (gs.doubles > 0 && !cur.inJail) {
+  if (gs.doubles > 0 && !cur.inJail && !cur.bankrupt) {
     gs.phase = 'rolling';
     gs.rolledThisTurn = false;
     return;
@@ -1816,10 +1952,30 @@ function doEndTurn(gs) {
     loops++;
   }
   gs.currentPlayerIndex = next;
+  if (next === 0) {
+    gs.roundsCompleted++;
+  }
   gs.doubles            = 0;
   gs.turn++;
   gs.phase              = 'rolling';
   gs.rolledThisTurn     = false;
+
+  const active = gs.players.filter(p => !p.bankrupt);
+  if (active.length <= 1) {
+    gs.winner = active[0] ? active[0].id : null;
+    gs.phase = 'end';
+    if (active[0]) addLog(gs, `🏆 ${active[0].name} wygrywa przez przetrwanie rynku.`);
+    playSfx('win');
+    return;
+  }
+  if (gs.roundsCompleted >= MAX_ROUNDS) {
+    const sorted = [...active].sort((a, b) => getPrestigeScore(b) - getPrestigeScore(a));
+    gs.winner = sorted[0].id;
+    gs.phase = 'end';
+    addLog(gs, `🏁 Koniec ${MAX_ROUNDS} rund. Wygrywa ${sorted[0].name} bilansem zawodowym.`);
+    playSfx('win');
+    return;
+  }
 
   addLog(gs, `--- Tura gracza ${gs.players[next].name} ---`, true);
   playSfx('turn');
@@ -1828,7 +1984,27 @@ function doEndTurn(gs) {
 // ============================================================
 // BANKRUPTCY
 // ============================================================
+function checkPlayerVitalStatus(gs, player) {
+  if (!player || player.bankrupt) return;
+  if (player.energy > 0 && player.ethics > 0 && player.burnout < CRITICAL_BURNOUT) return;
+  player.bankrupt = true;
+  if (player.energy <= 0) addLog(gs, `💥 ${player.name} odpada: energia spadła do zera.`);
+  else if (player.ethics <= 0) addLog(gs, `⚠️ ${player.name} odpada: etyka spadła do zera.`);
+  else addLog(gs, `🔥 ${player.name} odpada: krytyczne wypalenie.`);
+  showToast(`${player.name} wypada z gry.`);
+}
+
 function checkBankruptcy(gs, player, creditorId) {
+  checkPlayerVitalStatus(gs, player);
+  if (player.bankrupt && player.money >= 0) {
+    const activeVitals = gs.players.filter(p => !p.bankrupt);
+    if (activeVitals.length === 1) {
+      gs.winner = activeVitals[0].id;
+      gs.phase = 'end';
+      playSfx('win');
+    }
+    return;
+  }
   if (player.money >= 0) return;
 
   // ============================================================
@@ -1910,7 +2086,7 @@ function openBuildModal(gs) {
     const buildCost = ps.houses >= 4 ? sp.hotelCost : sp.houseCost;
     const canBuild = !ps.hotel && player.money >= buildCost;
     const canSell  = ps.hotel || ps.houses > 0;
-    const currentBuildings = ps.hotel ? '🏨 Hotel' : (ps.houses > 0 ? `🏠 ×${ps.houses}` : '(puste)');
+    const currentBuildings = ps.hotel ? '🏆 Pełna specjalizacja' : (ps.houses > 0 ? `📜 ×${ps.houses}` : '(puste)');
 
     const card = document.createElement('div');
     card.className = `build-card${canBuild ? '' : ' disabled'}`;
@@ -1972,13 +2148,13 @@ function doBuildHouse(gs, player, spaceId) {
   if (ps.houses >= 4) {
     ps.houses = 0;
     ps.hotel  = true;
-    addLog(gs, `${player.name} zbudował hotel na ${sp.name}.`);
-    showToast(`Hotel wybudowany na ${sp.name}!`);
+    addLog(gs, `${player.name} rozwinął pełną specjalizację na ${sp.name}.`);
+    showToast(`Pełna specjalizacja na ${sp.name}!`);
     playSfx('build');
   } else {
     ps.houses = (ps.houses || 0) + 1;
-    addLog(gs, `${player.name} zbudował dom na ${sp.name} (${ps.houses} domów).`);
-    showToast(`Dom wybudowany na ${sp.name}!`);
+    addLog(gs, `${player.name} dokupił certyfikat na ${sp.name} (${ps.houses} domów).`);
+    showToast(`Dodano certyfikat na ${sp.name}!`);
     playSfx('build');
   }
 }
@@ -1993,12 +2169,12 @@ function doSellHouse(gs, player, spaceId) {
     ps.hotel  = false;
     ps.houses = 4;
     player.money += sell;
-    addLog(gs, `${player.name} sprzedał hotel na ${sp.name} za ${sell} zł.`);
+    addLog(gs, `${player.name} wycofał pełną specjalizację na ${sp.name} za ${sell} zł.`);
     playSfx('sell');
   } else if (ps.houses > 0) {
     ps.houses--;
     player.money += sell;
-    addLog(gs, `${player.name} sprzedał dom na ${sp.name} za ${sell} zł.`);
+    addLog(gs, `${player.name} sprzedał certyfikat na ${sp.name} za ${sell} zł.`);
     playSfx('sell');
   }
 }
@@ -2096,9 +2272,9 @@ function openCardModal(card, deck) {
   const iconEl = document.getElementById('modal-card-icon');
   const textEl = document.getElementById('modal-card-text');
 
-  deckEl.textContent  = deck === 'insight' ? '🔮 Karta Wglądu' : '📋 Karta Sesji';
+  deckEl.textContent  = deck === 'insight' ? '🎲 Karta Szansy' : '👥 Karta Społeczności';
   deckEl.className    = `card-modal-deck ${deck}`;
-  iconEl.textContent  = deck === 'insight' ? '🔮' : '📋';
+  iconEl.textContent  = deck === 'insight' ? '🎲' : '👥';
   textEl.textContent  = card.text;
 
   openModal('modal-card');
@@ -2126,7 +2302,7 @@ function openBuyModal(gs, spaceId) {
   tbody.innerHTML = '';
 
   if (space.type === 'property' && space.rent) {
-    const labels = ['Czynsz bazowy', '1 dom', '2 domy', '3 domy', '4 domy', 'Hotel'];
+    const labels = ['Opłata bazowa', '1 certyfikat', '2 certyfikaty', '3 certyfikaty', '4 certyfikaty', 'Pełna specjalizacja'];
     space.rent.forEach((r, i) => {
       const tr = document.createElement('tr');
       tr.innerHTML = `<td>${labels[i]}</td><td>${r} zł</td>`;
@@ -2134,7 +2310,7 @@ function openBuyModal(gs, spaceId) {
     });
     // Monopoly double rent row
     const tr2 = document.createElement('tr');
-    tr2.innerHTML = `<td>Monopol (bez domów)</td><td>${space.rent[0] * 2} zł</td>`;
+    tr2.innerHTML = `<td>Pakiet (bez certyfikatów)</td><td>${space.rent[0] * 2} zł</td>`;
     tbody.insertBefore(tr2, tbody.children[1]);
   } else if (space.type === 'railroad') {
     ['1 stacja: 25 zł','2 stacje: 50 zł','3 stacje: 100 zł','4 stacje: 200 zł'].forEach(txt => {
@@ -2165,14 +2341,15 @@ function showGameOver(gs) {
 
   const final = document.getElementById('gameover-final');
   final.innerHTML = '';
-  const sorted = [...gs.players].sort((a, b) => b.money - a.money);
+  const sorted = [...gs.players].sort((a, b) => getPrestigeScore(b) - getPrestigeScore(a));
   sorted.forEach(p => {
+    const total = getPrestigeScore(p);
     const div = document.createElement('div');
     div.className = 'gameover-player';
     div.innerHTML = `
       <div class="player-token-sm" style="background:${p.color}; background-image:url('${getPawnIcon(p.pawn)}')">${getInitial(p.name)}</div>
       <div class="gameover-player-name">${escHtml(p.name)}${p.bankrupt ? ' 💀' : ''}</div>
-      <div class="gameover-player-money">${formatMoney(p.money)}</div>`;
+      <div class="gameover-player-money">${formatMoney(p.money)} · ⭐${p.prestige} · 🔋${p.energy} · ⚖️${p.ethics} · 🔥${p.burnout} · Σ ${total}</div>`;
     final.appendChild(div);
   });
 
