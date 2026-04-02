@@ -9,7 +9,6 @@
 // CONSTANTS
 // ============================================================
 const PLAYER_COLORS    = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12'];
-const PLAYER_INITIALS_BG = ['#c0392b', '#2980b9', '#229954', '#d68910'];
 const STARTING_MONEY   = 1500;
 const GO_MONEY         = 200;
 const JAIL_POSITION    = 10;
