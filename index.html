@@ -19,6 +19,7 @@
   <div class="menu-buttons">
     <button id="btn-local"  class="btn btn-primary  btn-lg btn-full">🧠 Graj Lokalnie</button>
     <button id="btn-online" class="btn btn-secondary btn-lg btn-full">🌐 Graj Online</button>
+    <button id="btn-settings" class="btn btn-outline btn-lg btn-full">⚙️ Ustawienia</button>
   </div>
 </div>
 
@@ -116,6 +117,19 @@
 
   <!-- Board area -->
   <div id="board-area">
+    <div id="board-toolbar">
+      <button id="btn-zoom-in" class="btn btn-sm btn-secondary">＋</button>
+      <button id="btn-zoom-out" class="btn btn-sm btn-secondary">－</button>
+      <button id="btn-rotate-left" class="btn btn-sm btn-secondary">⟲</button>
+      <button id="btn-rotate-right" class="btn btn-sm btn-secondary">⟳</button>
+      <button id="btn-reset-view" class="btn btn-sm btn-warning">Reset</button>
+    </div>
+    <div id="space-preview" class="space-preview-box">Najedź lub kliknij pole, aby zobaczyć efekt.</div>
+    <div id="dice-board-fx" class="dice-board-fx">
+      <div class="board-die" id="board-die1">⚀</div>
+      <div class="board-die" id="board-die2">⚀</div>
+    </div>
+    <div id="card-draw-fx" class="card-draw-fx"></div>
     <div id="board"></div>
   </div>
 
@@ -266,6 +280,42 @@
 </div>
 
 <!-- ============================================================
+     MODAL: Settings
+     ============================================================ -->
+<div id="modal-settings" class="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-title">⚙️ Ustawienia gry</div>
+    <div class="modal-body" style="margin-bottom:12px">
+      <div class="form-group">
+        <label>Szybkość animacji</label>
+        <input type="range" id="setting-animation-speed" min="0.5" max="2" step="0.1">
+      </div>
+      <div class="form-group">
+        <label>Wielkość czcionki</label>
+        <input type="range" id="setting-font-scale" min="0.8" max="1.4" step="0.05">
+      </div>
+      <div class="form-group">
+        <label>Jakość renderowania</label>
+        <select id="setting-render-quality">
+          <option value="low">Niska</option>
+          <option value="medium">Średnia</option>
+          <option value="high">Wysoka</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Intensywność efektów planszy</label>
+        <input type="range" id="setting-fx-intensity" min="0.5" max="1.5" step="0.1">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button id="btn-settings-reset" class="btn btn-warning">Reset</button>
+      <button id="btn-settings-save" class="btn btn-success">Zapisz</button>
+      <button id="btn-settings-close" class="btn btn-secondary">Zamknij</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
      TOAST
      ============================================================ -->
 <div id="toast-container"></div>
@@ -273,6 +323,7 @@
 <!-- Scripts -->
 <script src="/socket.io/socket.io.js"></script>
 <script src="public/board-data.js"></script>
+<script src="public/config.js"></script>
 <script src="public/game.js"></script>
 </body>
 </html>
