@@ -20,6 +20,9 @@
   --success:   #27ae60;
   --shadow:    0 2px 12px rgba(0,0,0,.25);
   --radius:    8px;
+  --ui-font-scale: 1;
+  --anim-speed-mult: 1;
+  --fx-intensity: 1;
 
   /* board dimensions */
   --corner-size: 78px;
@@ -32,7 +35,7 @@ html, body {
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   background: var(--bg);
   color: var(--text);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale));
   overflow: hidden;
 }
 
@@ -269,6 +272,7 @@ html, body {
   padding: 12px;
   overflow: auto;
   min-width: 0;
+  position: relative;
 }
 
 /* ----- CSS Grid Board ----- */
@@ -281,6 +285,8 @@ html, body {
   box-shadow: 0 4px 24px rgba(0,0,0,.5);
   position: relative;
   user-select: none;
+  transform-origin: center center;
+  transition: transform .45s ease;
 }
 
 /* ----- Board Spaces ----- */
@@ -296,10 +302,17 @@ html, body {
   font-size: 7px;
   text-align: center;
   padding: 2px 1px;
-  cursor: default;
+  cursor: pointer;
   transition: background .15s;
 }
 .board-space:hover { background: #d5f5e3; z-index: 2; }
+.space-focus-pulse {
+  animation: spacePulse .8s ease;
+}
+@keyframes spacePulse {
+  0% { box-shadow: inset 0 0 0 2px rgba(255,255,255,.9), 0 0 0 0 rgba(26,188,156,.8); }
+  100% { box-shadow: inset 0 0 0 2px rgba(255,255,255,.2), 0 0 0 12px rgba(26,188,156,0); }
+}
 
 /* Space sides need rotation */
 /* Left column (spaces 11-19): col=1, rows 2-10 */
@@ -444,22 +457,26 @@ html, body {
   z-index: 5;
 }
 .player-token {
-  width: 13px;
-  height: 13px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
-  border: 1.5px solid rgba(255,255,255,.9);
+  border: 2.5px solid rgba(255,255,255,.95);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 6px;
+  font-size: 9px;
   font-weight: 800;
   color: white;
   text-shadow: 0 1px 2px rgba(0,0,0,.7);
-  box-shadow: 0 1px 3px rgba(0,0,0,.5);
+  box-shadow: 0 4px 10px rgba(0,0,0,.55);
   flex-shrink: 0;
   background-repeat: no-repeat;
   background-position: center;
-  background-size: 75%;
+  background-size: 70%;
+}
+.player-token.active {
+  transform: scale(1.08);
+  box-shadow: 0 0 0 2px rgba(255,255,255,.65), 0 0 12px rgba(241,196,15,.9);
 }
 
 /* ----- Board Center ----- */
@@ -515,6 +532,89 @@ html, body {
   50%  { transform: rotateZ(180deg) scale(1.2); }
   100% { transform: rotateZ(360deg) scale(1); }
 }
+
+#board-toolbar {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  gap: 6px;
+  z-index: 12;
+}
+#board-toolbar .btn {
+  padding: 6px 10px;
+}
+.space-preview-box {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  width: 240px;
+  background: rgba(15,30,54,.92);
+  color: #fff;
+  border: 1px solid rgba(26,188,156,.45);
+  border-radius: 10px;
+  padding: 10px;
+  z-index: 12;
+  font-size: .78rem;
+}
+.space-preview-mode { opacity: .65; font-size: .68rem; text-transform: uppercase; margin-bottom: 5px; }
+.space-preview-name { color: #1abc9c; font-weight: 700; margin-bottom: 5px; }
+.space-preview-penalty { line-height: 1.3; }
+.dice-board-fx {
+  position: absolute;
+  left: 18%;
+  top: 75%;
+  display: flex;
+  gap: 10px;
+  opacity: 0;
+  z-index: 14;
+  pointer-events: none;
+}
+.board-die {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  border: 2px solid #0f1e36;
+  background: #fff;
+  box-shadow: 0 4px 12px rgba(0,0,0,.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+}
+.dice-board-fx.playing {
+  animation: diceTrack calc(1.15s / var(--anim-speed-mult)) cubic-bezier(.25,.68,.25,1);
+}
+@keyframes diceTrack {
+  0%   { opacity: 0; transform: translate(0, 0) rotate(0deg) scale(.6); }
+  10%  { opacity: 1; transform: translate(40px, -20px) rotate(80deg) scale(1.05); }
+  45%  { opacity: 1; transform: translate(300px, -160px) rotate(300deg) scale(1); }
+  75%  { opacity: 1; transform: translate(520px, -260px) rotate(540deg) scale(.92); }
+  100% { opacity: 0; transform: translate(680px, -340px) rotate(720deg) scale(.75); }
+}
+.card-draw-fx {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(.3) rotate(-14deg);
+  opacity: 0;
+  background: #fff;
+  color: #1a2a4a;
+  border: 2px solid #1abc9c;
+  border-radius: 12px;
+  padding: 18px 26px;
+  font-weight: 800;
+  pointer-events: none;
+  z-index: 15;
+}
+.card-draw-fx.playing {
+  animation: drawCard calc(.8s / var(--anim-speed-mult)) ease;
+}
+@keyframes drawCard {
+  0% { opacity: 0; transform: translate(-50%, 130%) scale(.2) rotate(-25deg); }
+  30% { opacity: 1; transform: translate(-50%, -50%) scale(1.08) rotate(-4deg); }
+  100% { opacity: 0; transform: translate(-50%, -150%) scale(.65) rotate(8deg); }
+}
 .center-current-player {
   font-size: 9px;
   font-weight: 700;
@@ -527,6 +627,26 @@ html, body {
   font-size: 8px;
   color: var(--text-muted);
   text-align: center;
+}
+.turn-player-stats {
+  margin-top: 4px;
+  width: min(220px, 90%);
+  background: rgba(15,30,54,.08);
+  border: 1px solid rgba(15,30,54,.2);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.turn-stats-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: .76rem;
+  color: #1a2a4a;
+}
+.turn-stats-row strong {
+  color: #0f1e36;
 }
 
 /* ----- Side Panel ----- */
@@ -700,6 +820,24 @@ html, body {
 .modal-body { color: var(--text); line-height: 1.5; margin-bottom: 20px; }
 .modal-actions { display: flex; gap: 10px; }
 .modal-actions .btn { flex: 1; }
+.form-group select,
+.form-group input[type=range] {
+  width: 100%;
+}
+
+/* Render quality modifiers */
+body.quality-low #board {
+  box-shadow: 0 1px 8px rgba(0,0,0,.3);
+}
+body.quality-low .player-token {
+  box-shadow: none;
+}
+body.quality-medium #board {
+  box-shadow: 0 3px 16px rgba(0,0,0,.4);
+}
+body.quality-high #board {
+  box-shadow: 0 calc(4px * var(--fx-intensity)) calc(24px * var(--fx-intensity)) rgba(0,0,0,.5);
+}
 
 /* Card modal */
 .card-modal-deck {
@@ -883,7 +1021,7 @@ html, body {
   }
   #side-panel { width: 220px; }
   .space-name { font-size: 5px; }
-  .player-token { width: 10px; height: 10px; font-size: 5px; }
+  .player-token { width: 16px; height: 16px; font-size: 7px; }
   .center-title { font-size: 16px; }
 }
 @media (max-width: 700px) {
