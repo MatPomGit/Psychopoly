@@ -1,0 +1,45 @@
+{
+  "click": [{ "freq": 900, "duration": 0.05, "gain": 0.06, "type": "square" }],
+  "dice": [
+    { "freq": 260, "duration": 0.08, "gain": 0.07 },
+    { "freq": 320, "duration": 0.08, "gain": 0.07, "delay": 0.05 },
+    { "freq": 390, "duration": 0.12, "gain": 0.06, "delay": 0.1 }
+  ],
+  "move": [{ "freq": 520, "duration": 0.08, "gain": 0.05 }],
+  "buy": [
+    { "freq": 660, "duration": 0.1, "gain": 0.07 },
+    { "freq": 880, "duration": 0.12, "gain": 0.07, "delay": 0.08 }
+  ],
+  "rent": [
+    { "freq": 220, "duration": 0.12, "gain": 0.06 },
+    { "freq": 170, "duration": 0.14, "gain": 0.06, "delay": 0.09 }
+  ],
+  "card": [
+    { "freq": 500, "duration": 0.08, "gain": 0.06 },
+    { "freq": 760, "duration": 0.1, "gain": 0.06, "delay": 0.08 }
+  ],
+  "jail": [{ "freq": 145, "duration": 0.2, "gain": 0.07, "type": "sawtooth" }],
+  "build": [
+    { "freq": 440, "duration": 0.07, "gain": 0.06 },
+    { "freq": 554, "duration": 0.08, "gain": 0.06, "delay": 0.06 },
+    { "freq": 659, "duration": 0.11, "gain": 0.06, "delay": 0.12 }
+  ],
+  "sell": [
+    { "freq": 520, "duration": 0.08, "gain": 0.06 },
+    { "freq": 390, "duration": 0.1, "gain": 0.06, "delay": 0.07 }
+  ],
+  "mortgage": [
+    { "freq": 320, "duration": 0.09, "gain": 0.06 },
+    { "freq": 280, "duration": 0.12, "gain": 0.06, "delay": 0.08 }
+  ],
+  "turn": [{ "freq": 700, "duration": 0.06, "gain": 0.06 }],
+  "bankrupt": [
+    { "freq": 180, "duration": 0.14, "gain": 0.07, "type": "sawtooth" },
+    { "freq": 120, "duration": 0.18, "gain": 0.07, "delay": 0.12, "type": "sawtooth" }
+  ],
+  "win": [
+    { "freq": 523, "duration": 0.08, "gain": 0.07 },
+    { "freq": 659, "duration": 0.1, "gain": 0.07, "delay": 0.08 },
+    { "freq": 784, "duration": 0.2, "gain": 0.07, "delay": 0.16 }
+  ]
+}
