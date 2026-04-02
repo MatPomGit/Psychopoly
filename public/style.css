@@ -256,12 +256,208 @@ html, body {
    GAME SCREEN
    ============================================================ */
 #screen-game {
-  flex-direction: row;
+  flex-direction: column;
   align-items: stretch;
   background: #2c3e50;
   padding: 0;
   overflow: hidden;
 }
+
+/* Main area: board + side panel */
+#game-main {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ============================================================
+   TURN QUEUE BAR
+   ============================================================ */
+#turn-queue {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  background: var(--navy-dark);
+  border-bottom: 2px solid #0a1527;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+#turn-queue::-webkit-scrollbar { height: 3px; }
+.tq-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: var(--radius);
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.1);
+  cursor: default;
+  transition: background .15s;
+  white-space: nowrap;
+  position: relative;
+}
+.tq-item:hover { background: rgba(255,255,255,.12); }
+.tq-item.tq-current {
+  background: rgba(26,188,156,.18);
+  border-color: var(--teal-light);
+  box-shadow: 0 0 10px rgba(26,188,156,.3);
+}
+.tq-item.tq-bankrupt { opacity: .35; }
+.tq-name {
+  font-size: .78rem;
+  font-weight: 700;
+  color: var(--white);
+}
+.tq-item.tq-current .tq-name { color: var(--teal-light); }
+.tq-sep {
+  color: rgba(255,255,255,.3);
+  font-size: .8rem;
+  flex-shrink: 0;
+}
+.tq-turn-label {
+  font-size: .65rem;
+  background: var(--teal);
+  color: #fff;
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+/* ============================================================
+   PLAYER STATS TOOLTIP (turn queue hover)
+   ============================================================ */
+.player-stats-tooltip {
+  position: fixed;
+  z-index: 300;
+  background: rgba(15,30,54,.97);
+  color: #fff;
+  border: 1px solid rgba(26,188,156,.55);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: .78rem;
+  min-width: 170px;
+  pointer-events: none;
+  box-shadow: 0 6px 24px rgba(0,0,0,.55);
+  display: none;
+  line-height: 1.5;
+}
+.pst-name {
+  font-weight: 800;
+  font-size: .88rem;
+  margin-bottom: 6px;
+  border-bottom: 1px solid rgba(255,255,255,.1);
+  padding-bottom: 4px;
+}
+.pst-row { display: flex; justify-content: space-between; gap: 12px; }
+.pst-label { opacity: .7; }
+
+/* ============================================================
+   STAT COLORS
+   ============================================================ */
+.stat-money      { color: #f1c40f; font-weight: 700; }
+.stat-prestige   { color: #b39ddb; font-weight: 700; }
+.stat-energy     { color: #2ecc71; font-weight: 700; }
+.stat-ethics     { color: #5dade2; font-weight: 700; }
+.stat-burnout    { color: #e74c3c; font-weight: 700; }
+.stat-supervision{ color: #1abc9c; font-weight: 700; }
+.stat-props      { color: #f39c12; font-weight: 700; }
+.stat-cards      { color: #a8e6cf; font-weight: 700; }
+
+/* ============================================================
+   SLIDE-OUT CHAT DRAWER (left side)
+   ============================================================ */
+#chat-drawer {
+  position: fixed;
+  top: 50%;
+  left: 0;
+  transform: translate(-272px, -50%);
+  z-index: 60;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  transition: transform .3s cubic-bezier(.4,0,.2,1);
+}
+#chat-drawer.open {
+  transform: translate(0, -50%);
+}
+#chat-drawer-panel {
+  width: 272px;
+  max-height: 420px;
+  min-height: 200px;
+  background: var(--navy-dark);
+  border: 1px solid rgba(255,255,255,.15);
+  border-left: none;
+  border-radius: 0 12px 12px 0;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--white);
+  box-shadow: 4px 0 20px rgba(0,0,0,.4);
+}
+.chat-drawer-title {
+  font-size: .82rem;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  opacity: .65;
+  border-bottom: 1px solid rgba(255,255,255,.1);
+  padding-bottom: 6px;
+  margin-bottom: 2px;
+}
+#chat-drawer-messages {
+  flex: 1;
+  overflow-y: auto;
+  font-size: .78rem;
+  min-height: 80px;
+  max-height: 280px;
+}
+.chat-drawer-offline-note {
+  font-size: .76rem;
+  opacity: .5;
+  text-align: center;
+  padding: 6px;
+  font-style: italic;
+}
+#chat-drawer-input-row {
+  display: flex;
+  gap: 4px;
+}
+#chat-drawer-input {
+  flex: 1;
+  padding: 6px 9px;
+  background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.15);
+  border-radius: 4px;
+  color: var(--white);
+  font-size: .78rem;
+  outline: none;
+}
+#chat-drawer-input:focus { border-color: var(--teal-light); }
+#chat-drawer-toggle {
+  width: 34px;
+  background: var(--navy);
+  color: var(--white);
+  border: 1px solid rgba(255,255,255,.15);
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  cursor: pointer;
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .15s;
+  flex-shrink: 0;
+}
+#chat-drawer-toggle:hover { background: var(--teal); }
+.chat-msg { margin-bottom: 3px; font-size: .77rem; line-height: 1.3; }
+.chat-msg strong { color: var(--teal-light); }
 
 #audio-controls {
   display: flex;
@@ -491,8 +687,14 @@ html, body {
   background-size: 70%;
 }
 .player-token.active {
-  transform: scale(1.08);
-  box-shadow: 0 0 0 2px rgba(255,255,255,.65), 0 0 12px rgba(241,196,15,.9);
+  transform: scale(1.18);
+  box-shadow: 0 0 0 2px rgba(255,255,255,.9), 0 0 18px rgba(241,196,15,1);
+  z-index: 10;
+  animation: tokenPulse 1.4s ease-in-out infinite;
+}
+@keyframes tokenPulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(255,255,255,.85), 0 0 10px rgba(241,196,15,.9); transform: scale(1.15); }
+  50%       { box-shadow: 0 0 0 3px rgba(255,255,255,1),  0 0 24px rgba(241,196,15,1);  transform: scale(1.25); }
 }
 
 /* ----- Board Center ----- */
@@ -662,7 +864,7 @@ html, body {
   color: #1a2a4a;
 }
 .turn-stats-row strong {
-  color: #0f1e36;
+  /* colors applied per-stat via .stat-* classes */
 }
 
 /* ----- Side Panel ----- */
@@ -959,35 +1161,8 @@ body.quality-high #board {
 .gameover-player-money { color: var(--teal-light); font-weight: 700; }
 
 /* ============================================================
-   CHAT (online)
+   CHAT (moved to #chat-drawer — see SLIDE-OUT CHAT DRAWER above)
    ============================================================ */
-#chat-area {
-  border-top: 1px solid rgba(255,255,255,.1);
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-#chat-messages {
-  height: 60px;
-  overflow-y: auto;
-  font-size: .72rem;
-  opacity: .75;
-}
-.chat-msg { margin-bottom: 2px; }
-.chat-msg strong { color: var(--teal-light); }
-#chat-input-row { display: flex; gap: 4px; }
-#chat-input {
-  flex: 1;
-  padding: 5px 8px;
-  background: rgba(255,255,255,.08);
-  border: 1px solid rgba(255,255,255,.15);
-  border-radius: 4px;
-  color: var(--white);
-  font-size: .78rem;
-  outline: none;
-}
-#chat-send { padding: 5px 10px; font-size: .75rem; }
 
 /* ============================================================
    SCROLLBARS
@@ -1041,8 +1216,72 @@ body.quality-high #board {
   .center-title { font-size: 16px; }
 }
 @media (max-width: 700px) {
-  #screen-game { flex-direction: column; }
+  #game-main { flex-direction: column; }
   #side-panel { width: 100%; height: 200px; flex-direction: row; }
   #panel-tabs { flex-direction: column; width: 60px; }
   :root { --corner-size: 48px; --cell-w: 32px; }
+}
+
+/* ============================================================
+   SPACE HOVER TOOLTIP
+   ============================================================ */
+.space-tooltip {
+  position: fixed;
+  z-index: 200;
+  background: rgba(15, 30, 54, .97);
+  color: #fff;
+  border: 1px solid rgba(26, 188, 156, .65);
+  border-radius: 9px;
+  padding: 8px 13px;
+  font-size: .78rem;
+  max-width: 210px;
+  pointer-events: none;
+  box-shadow: 0 6px 20px rgba(0,0,0,.5);
+  display: none;
+  transform: translate(-50%, calc(-100% - 8px));
+  line-height: 1.4;
+}
+.space-tooltip-name {
+  font-weight: 700;
+  color: var(--teal-light);
+  margin-bottom: 4px;
+  font-size: .82rem;
+}
+.space-tooltip-desc { opacity: .88; }
+
+/* ============================================================
+   CARD DECK PILES (board center)
+   ============================================================ */
+.center-decks {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.card-deck-pile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 7px 11px;
+  border-radius: 10px;
+  border: 2px solid rgba(0,0,0,.2);
+  cursor: pointer;
+  transition: transform .15s, box-shadow .2s;
+  min-width: 70px;
+  user-select: none;
+}
+.card-deck-pile:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,.35); }
+.deck-insight { background: linear-gradient(135deg, #f39c12, #e67e22); color: #fff; }
+.deck-session  { background: linear-gradient(135deg, #3498db, #2980b9); color: #fff; }
+.deck-icon  { font-size: 18px; line-height: 1; }
+.deck-name  { font-size: 9px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; text-align: center; }
+.deck-count { font-size: 8px; }
+.card-deck-pile.deck-active {
+  animation: deckPulse 1s ease-in-out infinite;
+}
+@keyframes deckPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,80,.9);  transform: scale(1);    }
+  50%       { box-shadow: 0 0 0 9px rgba(255,255,80,0); transform: scale(1.07); }
 }

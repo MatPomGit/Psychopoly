@@ -115,91 +115,112 @@
      ============================================================ -->
 <div id="screen-game" class="screen">
 
-  <!-- Board area -->
-  <div id="board-area">
-    <div id="board-toolbar">
-      <button id="btn-zoom-in" class="btn btn-sm btn-secondary">＋</button>
-      <button id="btn-zoom-out" class="btn btn-sm btn-secondary">－</button>
-      <button id="btn-rotate-left" class="btn btn-sm btn-secondary">⟲</button>
-      <button id="btn-rotate-right" class="btn btn-sm btn-secondary">⟳</button>
-      <button id="btn-reset-view" class="btn btn-sm btn-warning">Reset</button>
+  <!-- Turn queue bar -->
+  <div id="turn-queue"></div>
+
+  <!-- Main game area (board + side panel) -->
+  <div id="game-main">
+
+    <!-- Board area -->
+    <div id="board-area">
+      <div id="board-toolbar">
+        <button id="btn-zoom-in" class="btn btn-sm btn-secondary">＋</button>
+        <button id="btn-zoom-out" class="btn btn-sm btn-secondary">－</button>
+        <button id="btn-rotate-left" class="btn btn-sm btn-secondary">⟲</button>
+        <button id="btn-rotate-right" class="btn btn-sm btn-secondary">⟳</button>
+        <button id="btn-reset-view" class="btn btn-sm btn-warning">Reset</button>
+        <button id="btn-exit-to-menu" class="btn btn-sm btn-danger">🚪 Menu</button>
+      </div>
+      <div id="space-preview" class="space-preview-box">Najedź lub kliknij pole, aby zobaczyć efekt.</div>
+      <div id="dice-board-fx" class="dice-board-fx">
+        <div class="board-die" id="board-die1">⚀</div>
+        <div class="board-die" id="board-die2">⚀</div>
+      </div>
+      <div id="card-draw-fx" class="card-draw-fx"></div>
+      <div id="space-tooltip" class="space-tooltip"></div>
+      <div id="board"></div>
     </div>
-    <div id="space-preview" class="space-preview-box">Najedź lub kliknij pole, aby zobaczyć efekt.</div>
-    <div id="dice-board-fx" class="dice-board-fx">
-      <div class="board-die" id="board-die1">⚀</div>
-      <div class="board-die" id="board-die2">⚀</div>
+
+    <!-- Side panel -->
+    <div id="side-panel">
+      <div id="panel-tabs">
+        <button class="tab-btn active" data-tab="actions">Akcje</button>
+        <button class="tab-btn" data-tab="players">Gracze</button>
+        <button class="tab-btn" data-tab="props">Własności</button>
+        <button class="tab-btn" data-tab="log">Dziennik</button>
+      </div>
+
+      <!-- Actions tab -->
+      <div id="actions-content" class="panel-content active">
+        <div id="current-player-banner" style="background:rgba(26,188,156,.1);border-radius:6px;padding:8px 10px;font-size:.82rem;font-weight:700;color:#1abc9c;text-align:center;"></div>
+        <div id="audio-controls">
+          <button id="btn-toggle-sfx" class="btn btn-sm btn-outline audio-toggle-btn">🔊 Dźwięki: ON</button>
+          <button id="btn-toggle-music" class="btn btn-sm btn-outline audio-toggle-btn">🎵 Muzyka: ON</button>
+        </div>
+
+        <div id="dice-area" class="dice-display" style="justify-content:center;margin:4px 0">
+          <div class="die" id="die1">?</div>
+          <div class="die" id="die2">?</div>
+        </div>
+
+        <div class="action-section">
+          <div class="action-section-title">Rzut / Ruch</div>
+          <button id="btn-roll"      class="btn btn-primary  btn-full">🎲 Rzuć kostkami</button>
+          <button id="btn-pay-jail"  class="btn btn-warning  btn-full" style="display:none">💸 Zapłać karę (50 zł)</button>
+          <button id="btn-jail-card" class="btn btn-outline  btn-full" style="display:none">🎫 Użyj karty wolności</button>
+        </div>
+
+        <div class="action-section">
+          <div class="action-section-title">Zarządzanie</div>
+          <button id="btn-build"    class="btn btn-success  btn-full" style="display:none">📜 Rozwijaj / Redukuj</button>
+          <button id="btn-mortgage" class="btn btn-warning  btn-full" style="display:none">📋 Zastaw / Odkup</button>
+        </div>
+
+        <div class="action-section">
+          <div class="action-section-title">Koniec tury</div>
+          <button id="btn-end-turn" class="btn btn-secondary btn-full" disabled>✔ Zakończ turę</button>
+        </div>
+
+        <div id="phase-info" style="font-size:.75rem;opacity:.55;text-align:center;margin-top:4px;"></div>
+      </div>
+
+      <!-- Players tab -->
+      <div id="players-content" class="panel-content">
+        <div id="players-list-panel"></div>
+      </div>
+
+      <!-- Properties tab -->
+      <div id="props-content" class="panel-content">
+        <div id="properties-panel"></div>
+      </div>
+
+      <!-- Log tab -->
+      <div id="log-content" class="panel-content">
+        <div id="log-list"></div>
+      </div>
     </div>
-    <div id="card-draw-fx" class="card-draw-fx"></div>
-    <div id="board"></div>
+
+  </div><!-- /#game-main -->
+
+  <!-- Slide-out chat drawer (left side) -->
+  <div id="chat-drawer">
+    <div id="chat-drawer-panel">
+      <div class="chat-drawer-title">💬 Czat</div>
+      <div id="chat-drawer-messages"></div>
+      <div id="chat-drawer-offline-note" class="chat-drawer-offline-note" style="display:none">
+        Czat jest dostępny w trybie online.
+      </div>
+      <div id="chat-drawer-input-row">
+        <input type="text" id="chat-drawer-input" placeholder="Napisz wiadomość…" maxlength="200">
+        <button id="chat-drawer-send" class="btn btn-primary btn-sm">➤</button>
+      </div>
+    </div>
+    <button id="chat-drawer-toggle" title="Czat">💬</button>
   </div>
 
-  <!-- Side panel -->
-  <div id="side-panel">
-    <div id="panel-tabs">
-      <button class="tab-btn active" data-tab="actions">Akcje</button>
-      <button class="tab-btn" data-tab="players">Gracze</button>
-      <button class="tab-btn" data-tab="props">Własności</button>
-      <button class="tab-btn" data-tab="log">Dziennik</button>
-    </div>
+  <!-- Player stats tooltip (for turn queue hover) -->
+  <div id="player-stats-tooltip" class="player-stats-tooltip"></div>
 
-    <!-- Actions tab -->
-    <div id="actions-content" class="panel-content active">
-      <div id="current-player-banner" style="background:rgba(26,188,156,.1);border-radius:6px;padding:8px 10px;font-size:.82rem;font-weight:700;color:#1abc9c;text-align:center;"></div>
-      <div id="audio-controls">
-        <button id="btn-toggle-sfx" class="btn btn-sm btn-outline audio-toggle-btn">🔊 Dźwięki: ON</button>
-        <button id="btn-toggle-music" class="btn btn-sm btn-outline audio-toggle-btn">🎵 Muzyka: ON</button>
-      </div>
-
-      <div id="dice-area" class="dice-display" style="justify-content:center;margin:4px 0">
-        <div class="die" id="die1">?</div>
-        <div class="die" id="die2">?</div>
-      </div>
-
-      <div class="action-section">
-        <div class="action-section-title">Rzut / Ruch</div>
-        <button id="btn-roll"      class="btn btn-primary  btn-full">🎲 Rzuć kostkami</button>
-        <button id="btn-pay-jail"  class="btn btn-warning  btn-full" style="display:none">💸 Zapłać karę (50 zł)</button>
-        <button id="btn-jail-card" class="btn btn-outline  btn-full" style="display:none">🎫 Użyj karty wolności</button>
-      </div>
-
-      <div class="action-section">
-        <div class="action-section-title">Zarządzanie</div>
-        <button id="btn-build"    class="btn btn-success  btn-full" style="display:none">📜 Rozwijaj / Redukuj</button>
-        <button id="btn-mortgage" class="btn btn-warning  btn-full" style="display:none">📋 Zastaw / Odkup</button>
-      </div>
-
-      <div class="action-section">
-        <div class="action-section-title">Koniec tury</div>
-        <button id="btn-end-turn" class="btn btn-secondary btn-full" disabled>✔ Zakończ turę</button>
-      </div>
-
-      <div id="phase-info" style="font-size:.75rem;opacity:.55;text-align:center;margin-top:4px;"></div>
-    </div>
-
-    <!-- Players tab -->
-    <div id="players-content" class="panel-content">
-      <div id="players-list-panel"></div>
-    </div>
-
-    <!-- Properties tab -->
-    <div id="props-content" class="panel-content">
-      <div id="properties-panel"></div>
-    </div>
-
-    <!-- Log tab -->
-    <div id="log-content" class="panel-content">
-      <div id="log-list"></div>
-    </div>
-
-    <!-- Chat (online only) -->
-    <div id="chat-area" style="display:none">
-      <div id="chat-messages"></div>
-      <div id="chat-input-row">
-        <input type="text" id="chat-input" placeholder="Napisz wiadomość…" maxlength="200">
-        <button id="chat-send" class="btn btn-primary btn-sm">➤</button>
-      </div>
-    </div>
-  </div>
 </div>
 
 <!-- ============================================================

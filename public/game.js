@@ -32,12 +32,14 @@ const MAX_ROUNDS = 12;
 const DICE_FACES = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
 
 const PHASE_LABELS = {
-  rolling:   'Rzuć kostkami',
-  buying:    'Kup lub pomiń aktywo',
-  card:      'Ciągniesz kartę…',
-  'end-turn':'Zakończ turę',
-  jailed:    'Jesteś w stanie kryzysu',
-  end:       'Koniec gry',
+  rolling:        'Rzuć kostkami',
+  buying:         'Kup lub pomiń aktywo',
+  card:           'Ciągniesz kartę…',
+  'card-select':  'Kliknij odpowiedni stos kart na planszy',
+  moving:         'Pionek się porusza…',
+  'end-turn':     'Zakończ turę',
+  jailed:         'Jesteś w stanie kryzysu',
+  end:            'Koniec gry',
 };
 
 // ============================================================
@@ -101,7 +103,21 @@ let isDraggingBoard = false;
 let dragStartX = 0;
 let dragStartY = 0;
 let movedPlayersLastUpdate = [];
+let isAnimating = false;
+let animatingPlayerData = null; // { playerId, animPos }
 let gameSettings = { ...(window.PSYCHOPOLY_DEFAULT_CONFIG || {}) };
+
+// Stat colors (matching CSS .stat-* classes)
+const STAT_COLORS = {
+  money:       '#f1c40f',
+  prestige:    '#b39ddb',
+  energy:      '#2ecc71',
+  ethics:      '#5dade2',
+  burnout:     '#e74c3c',
+  supervision: '#1abc9c',
+  props:       '#f39c12',
+  cards:       '#a8e6cf',
+};
 
 // ============================================================
 // UTILITIES
@@ -813,6 +829,7 @@ function createGameState(playerConfigs) {
     log:             [],
     winner:          null,
     pendingCard:     null,
+    pendingCardDeck: null,
     pendingBuy:      null,
     rolledThisTurn:  false,
   };
@@ -826,7 +843,13 @@ function startLocalGame(playerConfigs) {
   myPlayerId = 0;   // in local mode all players use same device
   localGame  = createGameState(playerConfigs);
   if (!boardRendered) { renderBoard(); boardRendered = true; }
-  document.getElementById('chat-area').style.display = 'none';
+  // Chat offline note for local mode
+  const offlineNote = document.getElementById('chat-drawer-offline-note');
+  const drawerInput = document.getElementById('chat-drawer-input');
+  const drawerSend  = document.getElementById('chat-drawer-send');
+  if (offlineNote) offlineNote.style.display = 'block';
+  if (drawerInput) drawerInput.disabled = true;
+  if (drawerSend)  drawerSend.disabled  = true;
   showScreen('screen-game');
   addLog(localGame, `--- Tura gracza ${localGame.players[0].name} ---`, true);
   updateUI(localGame);
@@ -837,7 +860,13 @@ function startLocalGame(playerConfigs) {
 // ============================================================
 function startOnlineGame(gs) {
   if (!boardRendered) { renderBoard(); boardRendered = true; }
-  document.getElementById('chat-area').style.display = 'flex';
+  // Enable chat for online mode
+  const offlineNote = document.getElementById('chat-drawer-offline-note');
+  const drawerInput = document.getElementById('chat-drawer-input');
+  const drawerSend  = document.getElementById('chat-drawer-send');
+  if (offlineNote) offlineNote.style.display = 'none';
+  if (drawerInput) drawerInput.disabled = false;
+  if (drawerSend)  drawerSend.disabled  = false;
   showScreen('screen-game');
   applyOnlineState(gs);
 }
@@ -865,6 +894,7 @@ function setupGameHandlers() {
   // Roll
   document.getElementById('btn-roll').addEventListener('click', () => {
     if (!localGame) return;
+    if (isAnimating) return;
     if (gameMode === 'local') {
       doRoll(localGame);
       updateUI(localGame);
@@ -954,14 +984,41 @@ function setupGameHandlers() {
     if (localGame) updateUI(localGame);
   });
 
-  // Chat
-  document.getElementById('chat-send').addEventListener('click', sendChatMsg);
-  document.getElementById('chat-input').addEventListener('keydown', e => {
+  // Chat drawer toggle
+  const drawerToggle = document.getElementById('chat-drawer-toggle');
+  if (drawerToggle) {
+    drawerToggle.addEventListener('click', () => {
+      const drawer = document.getElementById('chat-drawer');
+      if (drawer) drawer.classList.toggle('open');
+    });
+  }
+
+  // Chat send via drawer
+  document.getElementById('chat-drawer-send').addEventListener('click', sendChatMsg);
+  document.getElementById('chat-drawer-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') sendChatMsg();
   });
 
   const btnSettingsClose = document.getElementById('btn-settings-close');
   if (btnSettingsClose) btnSettingsClose.addEventListener('click', () => closeModal('modal-settings'));
+
+  const btnExitToMenu = document.getElementById('btn-exit-to-menu');
+  if (btnExitToMenu) {
+    btnExitToMenu.addEventListener('click', () => {
+      if (!window.confirm('Wyjść do menu głównego? Aktualna gra zostanie utracona.')) return;
+      if (socket) socket.disconnect();
+      socket = null;
+      gameMode = null;
+      localGame = null;
+      boardRendered = false;
+      isAnimating = false;
+      animatingPlayerData = null;
+      // Close chat drawer
+      const chatDrawer = document.getElementById('chat-drawer');
+      if (chatDrawer) chatDrawer.classList.remove('open');
+      showScreen('screen-menu');
+    });
+  }
 
   const btnSettingsReset = document.getElementById('btn-settings-reset');
   if (btnSettingsReset) {
@@ -990,15 +1047,16 @@ function setupGameHandlers() {
 }
 
 function sendChatMsg() {
-  const inp = document.getElementById('chat-input');
-  const text = inp.value.trim();
+  const inp = document.getElementById('chat-drawer-input');
+  const text = inp ? inp.value.trim() : '';
   if (!text || !socket) return;
   socket.emit('chat-message', { text });
   inp.value = '';
 }
 
 function appendChatMsg(name, text) {
-  const el = document.getElementById('chat-messages');
+  const el = document.getElementById('chat-drawer-messages');
+  if (!el) return;
   const msg = document.createElement('div');
   msg.className = 'chat-msg';
   msg.innerHTML = `<strong>${escHtml(name)}:</strong> ${escHtml(text)}`;
@@ -1055,7 +1113,11 @@ function renderBoard() {
     tokenLayer.id = `tokens-${space.id}`;
     cell.appendChild(tokenLayer);
 
-    cell.addEventListener('mouseenter', () => showSpacePreview(space, 'hover'));
+    cell.addEventListener('mouseenter', (e) => {
+      showSpaceTooltip(space, cell);
+      showSpacePreview(space, 'hover');
+    });
+    cell.addEventListener('mouseleave', () => hideSpaceTooltip());
     cell.addEventListener('click', () => showSpacePreview(space, 'click'));
 
     board.appendChild(cell);
@@ -1069,6 +1131,18 @@ function renderBoard() {
   center.innerHTML = `
     <div class="center-title">PSYCHOPOLY</div>
     <div class="center-subtitle">Psychologiczne Monopoly</div>
+    <div class="center-decks">
+      <div id="insight-deck" class="card-deck-pile deck-insight">
+        <div class="deck-icon">🟧</div>
+        <div class="deck-name">Superwizja</div>
+        <div class="deck-count" id="insight-deck-count"></div>
+      </div>
+      <div id="session-deck" class="card-deck-pile deck-session">
+        <div class="deck-icon">🟦</div>
+        <div class="deck-name">Sesja</div>
+        <div class="deck-count" id="session-deck-count"></div>
+      </div>
+    </div>
     <div class="dice-display" id="center-dice" style="display:none">
       <div class="die" id="center-die1">?</div>
       <div class="die" id="center-die2">?</div>
@@ -1078,6 +1152,36 @@ function renderBoard() {
     <div class="turn-player-stats" id="turn-player-stats"></div>
   `;
   board.appendChild(center);
+
+  // Card deck click handlers
+  document.getElementById('insight-deck').addEventListener('click', () => {
+    if (!localGame) return;
+    const gs = localGame;
+    if (gs.phase !== 'card-select') return;
+    if (gs.pendingCardDeck !== 'insight') { showToast('Ciągnij z właściwego stosu kart!'); return; }
+    const player = gs.players[gs.currentPlayerIndex];
+    if (gameMode === 'local') {
+      doDrawCard(gs, player, 'insight');
+      gs.pendingCardDeck = null;
+      updateUI(gs);
+    } else {
+      sendOnlineAction('draw-card', { deck: 'insight' });
+    }
+  });
+  document.getElementById('session-deck').addEventListener('click', () => {
+    if (!localGame) return;
+    const gs = localGame;
+    if (gs.phase !== 'card-select') return;
+    if (gs.pendingCardDeck !== 'session') { showToast('Ciągnij z właściwego stosu kart!'); return; }
+    const player = gs.players[gs.currentPlayerIndex];
+    if (gameMode === 'local') {
+      doDrawCard(gs, player, 'session');
+      gs.pendingCardDeck = null;
+      updateUI(gs);
+    } else {
+      sendOnlineAction('draw-card', { deck: 'session' });
+    }
+  });
   applyBoardTransform();
 }
 
@@ -1130,6 +1234,22 @@ function showSpacePreview(space, source = 'hover') {
     <div class="space-preview-name">${escHtml(space.name)}</div>
     <div class="space-preview-penalty">${escHtml(getSpacePenalty(space))}</div>
   `;
+}
+
+function showSpaceTooltip(space, el) {
+  const tooltip = document.getElementById('space-tooltip');
+  if (!tooltip || !space || !el) return;
+  const rect = el.getBoundingClientRect();
+  tooltip.style.left = (rect.left + rect.width / 2) + 'px';
+  tooltip.style.top  = (rect.top - 8) + 'px';
+  const desc = space.description || getSpacePenalty(space);
+  tooltip.innerHTML = `<div class="space-tooltip-name">${escHtml(space.name)}</div><div class="space-tooltip-desc">${escHtml(desc)}</div>`;
+  tooltip.style.display = 'block';
+}
+
+function hideSpaceTooltip() {
+  const tooltip = document.getElementById('space-tooltip');
+  if (tooltip) tooltip.style.display = 'none';
 }
 
 function animateBoardFocus(fromSpaceId, toSpaceId) {
@@ -1195,6 +1315,7 @@ function updateUI(gs) {
   renderBuildingIndicators(gs);
   renderOwnershipRings(gs);
   updateSidePanel(gs);
+  updateTurnQueue(gs);
   updateActionButtons(gs);
   updateCenterInfo(gs);
   movedPlayersLastUpdate = gs.players.map(p => p.position);
@@ -1221,7 +1342,11 @@ function renderTokens(gs) {
 
   gs.players.forEach(player => {
     if (player.bankrupt) return;
-    const layer = document.getElementById(`tokens-${player.position}`);
+    // Use animation position when this player is mid-move
+    const displayPos = (animatingPlayerData && animatingPlayerData.playerId === player.id)
+      ? animatingPlayerData.animPos
+      : player.position;
+    const layer = document.getElementById(`tokens-${displayPos}`);
     if (!layer) return;
     const token = document.createElement('div');
     token.className = 'player-token';
@@ -1300,14 +1425,14 @@ function updateCenterInfo(gs) {
     const cardCount = cur.getOutOfJailCards || 0;
     const ownedCount = (cur.properties || []).length;
     turnStats.innerHTML = `
-      <div class="turn-stats-row"><span>💰 Gotówka</span><strong>${formatMoney(cur.money)}</strong></div>
-      <div class="turn-stats-row"><span>⭐ Prestiż</span><strong>${cur.prestige}</strong></div>
-      <div class="turn-stats-row"><span>🔋 Energia</span><strong>${cur.energy}</strong></div>
-      <div class="turn-stats-row"><span>⚖️ Etyka</span><strong>${cur.ethics}</strong></div>
-      <div class="turn-stats-row"><span>🔥 Wypalenie</span><strong>${cur.burnout}</strong></div>
-      <div class="turn-stats-row"><span>🧾 Własności</span><strong>${ownedCount}</strong></div>
-      <div class="turn-stats-row"><span>🛡️ Superwizja</span><strong>${cur.supervisionShield}</strong></div>
-      <div class="turn-stats-row"><span>🎫 Karty</span><strong>${cardCount}</strong></div>
+      <div class="turn-stats-row"><span>💰 Gotówka</span><strong class="stat-money">${formatMoney(cur.money)}</strong></div>
+      <div class="turn-stats-row"><span>⭐ Prestiż</span><strong class="stat-prestige">${cur.prestige}</strong></div>
+      <div class="turn-stats-row"><span>🔋 Energia</span><strong class="stat-energy">${cur.energy}</strong></div>
+      <div class="turn-stats-row"><span>⚖️ Etyka</span><strong class="stat-ethics">${cur.ethics}</strong></div>
+      <div class="turn-stats-row"><span>🔥 Wypalenie</span><strong class="stat-burnout">${cur.burnout}</strong></div>
+      <div class="turn-stats-row"><span>🧾 Własności</span><strong class="stat-props">${ownedCount}</strong></div>
+      <div class="turn-stats-row"><span>🛡️ Superwizja</span><strong class="stat-supervision">${cur.supervisionShield}</strong></div>
+      <div class="turn-stats-row"><span>🎫 Karty</span><strong class="stat-cards">${cardCount}</strong></div>
     `;
   }
 
@@ -1320,6 +1445,19 @@ function updateCenterInfo(gs) {
   // Update side-panel die display too
   document.getElementById('die1').textContent = gs.dice[0] > 0 ? DICE_FACES[gs.dice[0]] : '?';
   document.getElementById('die2').textContent = gs.dice[1] > 0 ? DICE_FACES[gs.dice[1]] : '?';
+
+  // Card deck counts and active state
+  const insightCountEl = document.getElementById('insight-deck-count');
+  const sessionCountEl = document.getElementById('session-deck-count');
+  if (insightCountEl) insightCountEl.textContent = (gs.insightCards ? gs.insightCards.length : 0) + ' kart';
+  if (sessionCountEl) sessionCountEl.textContent = (gs.sessionCards ? gs.sessionCards.length : 0) + ' kart';
+
+  const insightDeckEl = document.getElementById('insight-deck');
+  const sessionDeckEl = document.getElementById('session-deck');
+  const insightActive = gs.phase === 'card-select' && gs.pendingCardDeck === 'insight';
+  const sessionActive = gs.phase === 'card-select' && gs.pendingCardDeck === 'session';
+  if (insightDeckEl) insightDeckEl.classList.toggle('deck-active', insightActive);
+  if (sessionDeckEl) sessionDeckEl.classList.toggle('deck-active', sessionActive);
 }
 
 // ============================================================
@@ -1329,6 +1467,73 @@ function updateSidePanel(gs) {
   renderPlayersPanel(gs);
   renderPropertiesPanel(gs);
   renderLogPanel(gs);
+}
+
+// ============================================================
+// TURN QUEUE BAR
+// ============================================================
+function updateTurnQueue(gs) {
+  const el = document.getElementById('turn-queue');
+  if (!el) return;
+  el.innerHTML = '';
+  const n = gs.players.length;
+  for (let i = 0; i < n; i++) {
+    const idx = (gs.currentPlayerIndex + i) % n;
+    const player = gs.players[idx];
+    const isCurrent = i === 0;
+
+    const item = document.createElement('div');
+    item.className = `tq-item${isCurrent ? ' tq-current' : ''}${player.bankrupt ? ' tq-bankrupt' : ''}`;
+
+    item.innerHTML = `
+      <div class="player-token-sm" style="background:${player.color}; background-image:url('${getPawnIcon(player.pawn)}')">${getInitial(player.name)}</div>
+      <span class="tq-name">${escHtml(player.name)}</span>
+      ${isCurrent ? '<span class="tq-turn-label">TERAZ</span>' : ''}
+    `;
+
+    item.addEventListener('mouseenter', () => showPlayerStatsTooltip(player, item));
+    item.addEventListener('mouseleave', () => hidePlayerStatsTooltip());
+
+    el.appendChild(item);
+
+    if (i < n - 1) {
+      const sep = document.createElement('div');
+      sep.className = 'tq-sep';
+      sep.textContent = '›';
+      el.appendChild(sep);
+    }
+  }
+}
+
+function showPlayerStatsTooltip(player, anchorEl) {
+  const tooltip = document.getElementById('player-stats-tooltip');
+  if (!tooltip || !anchorEl) return;
+
+  const ownedCount = (player.properties || []).length;
+  const jailStatus = player.bankrupt ? '💀 Odpadł' :
+                     player.inJail   ? `🔒 Izolacja (${player.jailTurns}/${MAX_JAIL_TURNS})` : '';
+
+  tooltip.innerHTML = `
+    <div class="pst-name" style="color:${player.color}">${escHtml(player.name)}</div>
+    <div class="pst-row"><span class="pst-label">💰 Gotówka</span><span class="stat-money">${formatMoney(player.money)}</span></div>
+    <div class="pst-row"><span class="pst-label">⭐ Prestiż</span><span class="stat-prestige">${player.prestige}</span></div>
+    <div class="pst-row"><span class="pst-label">🔋 Energia</span><span class="stat-energy">${player.energy}</span></div>
+    <div class="pst-row"><span class="pst-label">⚖️ Etyka</span><span class="stat-ethics">${player.ethics}</span></div>
+    <div class="pst-row"><span class="pst-label">🔥 Wypalenie</span><span class="stat-burnout">${player.burnout}</span></div>
+    <div class="pst-row"><span class="pst-label">🛡️ Superwizja</span><span class="stat-supervision">${player.supervisionShield}</span></div>
+    <div class="pst-row"><span class="pst-label">🧾 Własności</span><span class="stat-props">${ownedCount}</span></div>
+    ${jailStatus ? `<div class="pst-row" style="margin-top:4px;opacity:.7">${jailStatus}</div>` : ''}
+  `;
+
+  const rect = anchorEl.getBoundingClientRect();
+  tooltip.style.left = rect.left + 'px';
+  tooltip.style.top  = (rect.bottom + 6) + 'px';
+  tooltip.style.display = 'block';
+}
+
+function hidePlayerStatsTooltip() {
+  const tooltip = document.getElementById('player-stats-tooltip');
+  if (tooltip) tooltip.style.display = 'none';
 }
 
 function renderPlayersPanel(gs) {
@@ -1352,9 +1557,9 @@ function renderPlayersPanel(gs) {
       <div class="player-card-header">
         <div class="player-token-sm" style="background:${player.color}; background-image:url('${getPawnIcon(player.pawn)}')">${getInitial(player.name)}</div>
         <div class="player-name-label">${escHtml(player.name)}</div>
-        <div class="player-money-label">${formatMoney(player.money)} · ⭐${player.prestige}</div>
+        <div class="player-money-label"><span class="stat-money">${formatMoney(player.money)}</span> · <span class="stat-prestige">⭐${player.prestige}</span></div>
       </div>
-      <div class="player-status-row">${statusText} · 🔋${player.energy} ⚖️${player.ethics} 🔥${player.burnout} · Pole: ${player.position}</div>
+      <div class="player-status-row">${statusText} · <span class="stat-energy">🔋${player.energy}</span> <span class="stat-ethics">⚖️${player.ethics}</span> <span class="stat-burnout">🔥${player.burnout}</span> · Pole: ${player.position}</div>
       <div class="player-props-mini">${propDots}</div>`;
     list.appendChild(card);
   });
@@ -1450,12 +1655,12 @@ function updateActionButtons(gs) {
   // Roll
   const btnRoll = document.getElementById('btn-roll');
   btnRoll.style.display  = (phase === 'rolling' || (phase === 'end-turn' && gs.doubles > 0)) ? 'flex' : 'none';
-  btnRoll.disabled       = !myTurn;
+  btnRoll.disabled       = !myTurn || isAnimating;
 
   // Jail buttons
   const btnPayJail  = document.getElementById('btn-pay-jail');
   const btnJailCard = document.getElementById('btn-jail-card');
-  if (cur.inJail && phase === 'rolling' && myTurn) {
+  if (cur.inJail && phase === 'rolling' && myTurn && !isAnimating) {
     btnPayJail.style.display  = 'flex';
     btnJailCard.style.display = cur.getOutOfJailCards > 0 ? 'flex' : 'none';
   } else {
@@ -1466,7 +1671,7 @@ function updateActionButtons(gs) {
   // End turn
   const btnEnd = document.getElementById('btn-end-turn');
   btnEnd.style.display = 'flex';
-  btnEnd.disabled = (phase !== 'end-turn') || !myTurn;
+  btnEnd.disabled = (phase !== 'end-turn') || !myTurn || isAnimating;
 
   // Build / Mortgage (available during rolling or end-turn on your turn)
   const canManage = myTurn && (phase === 'rolling' || phase === 'end-turn');
@@ -1558,18 +1763,45 @@ function handleJailRoll(gs, player, d1, d2, isDoubles) {
 
 function doMove(gs, player, steps) {
   const oldPos = player.position;
-  const newPos = (player.position + steps) % 40;
-  // newPos < oldPos iff (oldPos + steps) >= 40 for dice values, so one condition suffices
-  if (newPos < oldPos) {
-    applyPlayerDelta(gs, player, { money: GO_MONEY, prestige: 2, energy: 1 }, 'START');
-    addLog(gs, `${player.name} przeszedł przez START — bonus miesięczny (+${GO_MONEY} zł, +2 prestiżu, +1 energii).`);
-    showToast(`${player.name} przeszedł przez START! +${GO_MONEY} zł / +2⭐ / +1🔋`);
-  }
-  player.position = newPos;
+  gs.phase = 'moving';
   playSfx('move');
-  const spaceName = BOARD_SPACES[newPos] ? BOARD_SPACES[newPos].name : `pole ${newPos}`;
-  addLog(gs, `${player.name} wylądował na: ${spaceName}.`);
-  handleLanding(gs, player);
+  isAnimating = true;
+
+  startMoveAnimation(gs, player, oldPos, steps, () => {
+    const newPos = (oldPos + steps) % 40;
+    if (oldPos + steps >= 40) {
+      applyPlayerDelta(gs, player, { money: GO_MONEY, prestige: 2, energy: 1 }, 'START');
+      addLog(gs, `${player.name} przeszedł przez START — bonus miesięczny (+${GO_MONEY} zł, +2 prestiżu, +1 energii).`);
+      showToast(`${player.name} przeszedł przez START! +${GO_MONEY} zł / +2⭐ / +1🔋`);
+    }
+    player.position = newPos;
+    isAnimating = false;
+    animatingPlayerData = null;
+    const spaceName = BOARD_SPACES[newPos] ? BOARD_SPACES[newPos].name : `pole ${newPos}`;
+    addLog(gs, `${player.name} wylądował na: ${spaceName}.`);
+    handleLanding(gs, player);
+    updateUI(gs);
+  });
+}
+
+function startMoveAnimation(gs, player, oldPos, steps, onComplete) {
+  let step = 0;
+  // Target total animation ~1800ms; minimum 120ms per step to avoid overly fast movement
+  const stepDelay = Math.max(120, Math.floor(1800 / steps));
+
+  function tick() {
+    step++;
+    animatingPlayerData = { playerId: player.id, animPos: (oldPos + step) % 40 };
+    renderTokens(gs);
+    // Play move sound only on every other step to avoid audio spam on long moves
+    if (step % 2 === 0) playSfx('move');
+    if (step < steps) {
+      setTimeout(tick, stepDelay);
+    } else {
+      setTimeout(onComplete, 300);
+    }
+  }
+  setTimeout(tick, stepDelay);
 }
 
 function handleLanding(gs, player) {
@@ -1599,7 +1831,10 @@ function handleLanding(gs, player) {
       gs.phase = 'end-turn';
       break;
     case 'card':
-      doDrawCard(gs, player, space.deck);
+      gs.phase = 'card-select';
+      gs.pendingCardDeck = space.deck;
+      addLog(gs, `${player.name} musi dobrać kartę ${space.deck === 'insight' ? 'Superwizji' : 'Sesji'}. Kliknij stos kart!`);
+      showToast(`Kliknij stos kart ${space.deck === 'insight' ? '🟧 Superwizja' : '🟦 Sesja'}!`);
       break;
     case 'jail':
       addLog(gs, `${player.name} ma przystanek: ${space.name}.`);
