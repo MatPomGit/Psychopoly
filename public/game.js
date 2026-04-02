@@ -49,6 +49,15 @@ let currentRoomId = null;
 let isHost        = false;
 let boardRendered = false;
 let localSelections = [];
+let boardScale = 1;
+let boardRotation = 0;
+let boardPanX = 0;
+let boardPanY = 0;
+let isDraggingBoard = false;
+let dragStartX = 0;
+let dragStartY = 0;
+let movedPlayersLastUpdate = [];
+let gameSettings = { ...(window.PSYCHOPOLY_DEFAULT_CONFIG || {}) };
 
 // ============================================================
 // UTILITIES
@@ -87,6 +96,100 @@ function getInitial(name = '') {
   return (name.trim().charAt(0) || '?').toUpperCase();
 }
 
+function loadSettings() {
+  const defaults = window.PSYCHOPOLY_DEFAULT_CONFIG || {};
+  try {
+    const raw = localStorage.getItem('psychopoly-settings');
+    if (raw) gameSettings = { ...defaults, ...JSON.parse(raw) };
+    else gameSettings = { ...defaults };
+  } catch (_e) {
+    gameSettings = { ...defaults };
+  }
+}
+
+function saveSettings() {
+  localStorage.setItem('psychopoly-settings', JSON.stringify(gameSettings));
+}
+
+function applySettings() {
+  document.documentElement.style.setProperty('--ui-font-scale', gameSettings.fontScale || 1);
+  document.documentElement.style.setProperty('--anim-speed-mult', gameSettings.animationSpeed || 1);
+  document.documentElement.style.setProperty('--fx-intensity', gameSettings.boardFxIntensity || 1);
+  document.body.classList.remove('quality-low', 'quality-medium', 'quality-high');
+  document.body.classList.add(`quality-${gameSettings.renderQuality || 'high'}`);
+}
+
+function syncSettingsForm() {
+  const anim = document.getElementById('setting-animation-speed');
+  const font = document.getElementById('setting-font-scale');
+  const quality = document.getElementById('setting-render-quality');
+  const fx = document.getElementById('setting-fx-intensity');
+  if (anim) anim.value = String(gameSettings.animationSpeed || 1);
+  if (font) font.value = String(gameSettings.fontScale || 1);
+  if (quality) quality.value = gameSettings.renderQuality || 'high';
+  if (fx) fx.value = String(gameSettings.boardFxIntensity || 1);
+}
+
+function openSettingsModal() {
+  syncSettingsForm();
+  openModal('modal-settings');
+}
+
+function applyBoardTransform() {
+  const board = document.getElementById('board');
+  if (!board) return;
+  board.style.transform = `translate(${boardPanX}px, ${boardPanY}px) scale(${boardScale}) rotate(${boardRotation}deg)`;
+}
+
+function clampBoardScale(value) {
+  return Math.max(0.7, Math.min(2.3, value));
+}
+
+function setBoardScale(nextScale) {
+  boardScale = clampBoardScale(nextScale);
+  applyBoardTransform();
+}
+
+function setupBoardViewportControls() {
+  const zoomIn = document.getElementById('btn-zoom-in');
+  const zoomOut = document.getElementById('btn-zoom-out');
+  const rotLeft = document.getElementById('btn-rotate-left');
+  const rotRight = document.getElementById('btn-rotate-right');
+  const reset = document.getElementById('btn-reset-view');
+  const boardArea = document.getElementById('board-area');
+
+  if (zoomIn) zoomIn.addEventListener('click', () => setBoardScale(boardScale + 0.15));
+  if (zoomOut) zoomOut.addEventListener('click', () => setBoardScale(boardScale - 0.15));
+  if (rotLeft) rotLeft.addEventListener('click', () => { boardRotation -= 15; applyBoardTransform(); });
+  if (rotRight) rotRight.addEventListener('click', () => { boardRotation += 15; applyBoardTransform(); });
+  if (reset) reset.addEventListener('click', () => {
+    boardScale = 1;
+    boardRotation = 0;
+    boardPanX = 0;
+    boardPanY = 0;
+    applyBoardTransform();
+  });
+
+  if (!boardArea) return;
+  boardArea.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    setBoardScale(boardScale + (e.deltaY < 0 ? 0.08 : -0.08));
+  }, { passive: false });
+
+  boardArea.addEventListener('pointerdown', (e) => {
+    isDraggingBoard = true;
+    dragStartX = e.clientX - boardPanX;
+    dragStartY = e.clientY - boardPanY;
+  });
+  window.addEventListener('pointerup', () => { isDraggingBoard = false; });
+  window.addEventListener('pointermove', (e) => {
+    if (!isDraggingBoard) return;
+    boardPanX = e.clientX - dragStartX;
+    boardPanY = e.clientY - dragStartY;
+    applyBoardTransform();
+  });
+}
+
 // ============================================================
 // SCREEN MANAGEMENT
 // ============================================================
@@ -99,10 +202,13 @@ function showScreen(id) {
 // INIT
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
+  loadSettings();
+  applySettings();
   setupMenuHandlers();
   setupLocalSetupHandlers();
   setupOnlineLobbyHandlers();
   setupGameHandlers();
+  setupBoardViewportControls();
   showScreen('screen-menu');
 });
 
@@ -117,6 +223,7 @@ function setupMenuHandlers() {
     initSocket();
     showScreen('screen-online-lobby');
   });
+  document.getElementById('btn-settings').addEventListener('click', openSettingsModal);
   document.getElementById('btn-play-again').addEventListener('click', () => {
     if (socket) socket.disconnect();
     socket = null;
@@ -257,6 +364,8 @@ function setupOnlineLobbyHandlers() {
   });
 
   document.getElementById('btn-create-room').addEventListener('click', () => {
+    if (!myPlayerName) { showToast('Najpierw wpisz nazwę gracza.'); return; }
+    if (!socket) { showToast('Brak połączenia z serwerem online.'); return; }
     if (socket) socket.emit('create-room', { playerName: myPlayerName, color: myPlayerColor, pawn: myPlayerPawn });
   });
 
@@ -266,6 +375,8 @@ function setupOnlineLobbyHandlers() {
   });
 
   document.getElementById('btn-join-room').addEventListener('click', () => {
+    if (!myPlayerName) { showToast('Najpierw wpisz nazwę gracza.'); return; }
+    if (!socket) { showToast('Brak połączenia z serwerem online.'); return; }
     const code = document.getElementById('room-code-input').value.trim().toUpperCase();
     if (!code) { showToast('Wpisz kod pokoju!'); return; }
     if (socket) socket.emit('join-room', { roomId: code, playerName: myPlayerName, color: myPlayerColor, pawn: myPlayerPawn });
@@ -284,6 +395,8 @@ function setupOnlineLobbyHandlers() {
   });
 
   document.getElementById('btn-lobby-start').addEventListener('click', () => {
+    if (!isHost) { showToast('Tylko host może rozpocząć grę.'); return; }
+    if (!socket) { showToast('Brak połączenia z serwerem online.'); return; }
     if (socket) socket.emit('start-game');
   });
 }
@@ -605,6 +718,34 @@ function setupGameHandlers() {
   document.getElementById('chat-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') sendChatMsg();
   });
+
+  const btnSettingsClose = document.getElementById('btn-settings-close');
+  if (btnSettingsClose) btnSettingsClose.addEventListener('click', () => closeModal('modal-settings'));
+
+  const btnSettingsReset = document.getElementById('btn-settings-reset');
+  if (btnSettingsReset) {
+    btnSettingsReset.addEventListener('click', () => {
+      gameSettings = { ...(window.PSYCHOPOLY_DEFAULT_CONFIG || {}) };
+      applySettings();
+      syncSettingsForm();
+      saveSettings();
+      showToast('Przywrócono domyślne ustawienia.');
+    });
+  }
+
+  const btnSettingsSave = document.getElementById('btn-settings-save');
+  if (btnSettingsSave) {
+    btnSettingsSave.addEventListener('click', () => {
+      gameSettings.animationSpeed = parseFloat(document.getElementById('setting-animation-speed').value) || 1;
+      gameSettings.fontScale = parseFloat(document.getElementById('setting-font-scale').value) || 1;
+      gameSettings.renderQuality = document.getElementById('setting-render-quality').value || 'high';
+      gameSettings.boardFxIntensity = parseFloat(document.getElementById('setting-fx-intensity').value) || 1;
+      applySettings();
+      saveSettings();
+      closeModal('modal-settings');
+      showToast('Ustawienia zapisane.');
+    });
+  }
 }
 
 function sendChatMsg() {
@@ -665,12 +806,16 @@ function renderBoard() {
     } else {
       cell.innerHTML = spaceContent(space, isTop);
     }
+    cell.dataset.spaceId = String(space.id);
 
     // Token layer
     const tokenLayer = document.createElement('div');
     tokenLayer.className = 'token-layer';
     tokenLayer.id = `tokens-${space.id}`;
     cell.appendChild(tokenLayer);
+
+    cell.addEventListener('mouseenter', () => showSpacePreview(space, 'hover'));
+    cell.addEventListener('click', () => showSpacePreview(space, 'click'));
 
     board.appendChild(cell);
   });
@@ -689,8 +834,10 @@ function renderBoard() {
     </div>
     <div class="center-current-player" id="center-player"></div>
     <div class="center-phase" id="center-phase"></div>
+    <div class="turn-player-stats" id="turn-player-stats"></div>
   `;
   board.appendChild(center);
+  applyBoardTransform();
 }
 
 function cornerContent(space) {
@@ -722,11 +869,86 @@ function spaceIcon(type) {
   return icons[type] ? icons[type] + ' ' : '';
 }
 
+function getSpacePenalty(space) {
+  if (!space) return 'Brak danych.';
+  if (space.type === 'tax') return `Kara podatkowa: zapłać ${space.amount} zł.`;
+  if (space.type === 'gotojail') return 'Kara: trafiasz do Izolacji (pole 10).';
+  if (space.type === 'property' || space.type === 'railroad' || space.type === 'utility') {
+    return space.price ? `Możliwy koszt: zakup ${space.price} zł lub czynsz.` : 'Pole własności.';
+  }
+  if (space.type === 'card') return 'Dobierz kartę i wykonaj polecenie.';
+  return 'Brak bezpośredniej kary na tym polu.';
+}
+
+function showSpacePreview(space, source = 'hover') {
+  const box = document.getElementById('space-preview');
+  if (!box || !space) return;
+  const modeLabel = source === 'click' ? 'Podgląd pola (klik)' : 'Podgląd pola (hover)';
+  box.innerHTML = `
+    <div class="space-preview-mode">${modeLabel}</div>
+    <div class="space-preview-name">${escHtml(space.name)}</div>
+    <div class="space-preview-penalty">${escHtml(getSpacePenalty(space))}</div>
+  `;
+}
+
+function animateBoardFocus(fromSpaceId, toSpaceId) {
+  const fromEl = document.getElementById(`space-${fromSpaceId}`);
+  const toEl = document.getElementById(`space-${toSpaceId}`);
+  const boardArea = document.getElementById('board-area');
+  if (!fromEl || !toEl || !boardArea) return;
+
+  [fromEl, toEl].forEach((el, idx) => {
+    setTimeout(() => {
+      el.classList.remove('space-focus-pulse');
+      void el.offsetWidth;
+      el.classList.add('space-focus-pulse');
+    }, idx * 450);
+  });
+
+  const toRect = toEl.getBoundingClientRect();
+  const areaRect = boardArea.getBoundingClientRect();
+  const dx = areaRect.left + areaRect.width / 2 - (toRect.left + toRect.width / 2);
+  const dy = areaRect.top + areaRect.height / 2 - (toRect.top + toRect.height / 2);
+  boardPanX += dx * 0.55;
+  boardPanY += dy * 0.55;
+  setBoardScale(Math.max(boardScale, 1.35));
+}
+
+function animateCardDraw(deck) {
+  const fx = document.getElementById('card-draw-fx');
+  if (!fx) return;
+  fx.textContent = deck === 'insight' ? '🟧 Karta Wglądu' : '🟦 Karta Sesji';
+  fx.classList.remove('playing');
+  void fx.offsetWidth;
+  fx.classList.add('playing');
+}
+
+function animateDiceOnBoard(d1, d2) {
+  const fx = document.getElementById('dice-board-fx');
+  const die1 = document.getElementById('board-die1');
+  const die2 = document.getElementById('board-die2');
+  if (!fx || !die1 || !die2) return;
+  die1.textContent = DICE_FACES[d1] || '⚀';
+  die2.textContent = DICE_FACES[d2] || '⚀';
+  fx.classList.remove('playing');
+  void fx.offsetWidth;
+  fx.classList.add('playing');
+}
+
 // ============================================================
 // UI UPDATE
 // ============================================================
 function updateUI(gs) {
   if (!gs) return;
+
+  const prevPositions = movedPlayersLastUpdate.length
+    ? movedPlayersLastUpdate
+    : gs.players.map(p => p.position);
+  const movedIdx = gs.players.findIndex((p, idx) => !p.bankrupt && prevPositions[idx] !== p.position);
+  if (movedIdx >= 0) {
+    const moved = gs.players[movedIdx];
+    animateBoardFocus(prevPositions[movedIdx] ?? moved.position, moved.position);
+  }
 
   renderTokens(gs);
   renderBuildingIndicators(gs);
@@ -734,6 +956,7 @@ function updateUI(gs) {
   updateSidePanel(gs);
   updateActionButtons(gs);
   updateCenterInfo(gs);
+  movedPlayersLastUpdate = gs.players.map(p => p.position);
 
   if (gs.phase === 'end' && gs.winner !== null) {
     setTimeout(() => showGameOver(gs), 600);
@@ -761,6 +984,7 @@ function renderTokens(gs) {
     if (!layer) return;
     const token = document.createElement('div');
     token.className = 'player-token';
+    if (player.id === gs.currentPlayerIndex) token.classList.add('active');
     token.style.backgroundColor = player.color;
     token.style.backgroundImage = `url('${getPawnIcon(player.pawn)}')`;
     token.textContent = getInitial(player.name);
@@ -828,6 +1052,17 @@ function updateCenterInfo(gs) {
   }
   if (centerPhase) {
     centerPhase.textContent = PHASE_LABELS[gs.phase] || gs.phase;
+  }
+
+  const turnStats = document.getElementById('turn-player-stats');
+  if (turnStats) {
+    const cardCount = cur.getOutOfJailCards || 0;
+    const ownedCount = (cur.properties || []).length;
+    turnStats.innerHTML = `
+      <div class="turn-stats-row"><span>💰 Gotówka</span><strong>${formatMoney(cur.money)}</strong></div>
+      <div class="turn-stats-row"><span>🧾 Własności</span><strong>${ownedCount}</strong></div>
+      <div class="turn-stats-row"><span>🎫 Karty</span><strong>${cardCount}</strong></div>
+    `;
   }
 
   if (gs.dice[0] > 0 && centerDice) {
@@ -1015,9 +1250,20 @@ function doRoll(gs) {
   addLog(gs, `${player.name} rzucił ${DICE_FACES[d1]} ${DICE_FACES[d2]}${isDoubles ? ' — DUBLET!' : ''}.`);
 
   // Animate dice
-  ['die1','die2'].forEach(id => {
+  animateDiceOnBoard(d1, d2);
+  ['die1','die2','center-die1','center-die2'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) { el.classList.remove('rolling'); void el.offsetWidth; el.classList.add('rolling'); }
+    if (el) {
+      el.classList.remove('rolling');
+      void el.offsetWidth;
+      el.classList.add('rolling');
+      let ticks = 0;
+      const timer = setInterval(() => {
+        ticks++;
+        el.textContent = DICE_FACES[rollDie()];
+        if (ticks >= 8) clearInterval(timer);
+      }, 55);
+    }
   });
 
   if (player.inJail) {
@@ -1188,6 +1434,7 @@ function sendToJail(gs, player) {
 // ============================================================
 function doDrawCard(gs, player, deck) {
   let card;
+  animateCardDraw(deck);
   if (deck === 'insight') {
     if (!gs.insightCards.length) {
       gs.insightCards = shuffleArray([...gs.insightDiscard]);
