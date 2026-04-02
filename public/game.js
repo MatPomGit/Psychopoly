@@ -49,6 +49,45 @@ let currentRoomId = null;
 let isHost        = false;
 let boardRendered = false;
 let localSelections = [];
+const AUDIO_PREFS_KEY = 'psychopoly-audio-prefs-v1';
+const SFX_PRESET_PATH = 'assets/sounds/sfx-presets.json';
+const MUSIC_THEME_PATH = 'assets/music/music-theme.json';
+const DEFAULT_SFX_PRESETS = {
+  click:    [{ freq: 900, duration: 0.05, gain: 0.06, type: 'square' }],
+  dice:     [{ freq: 260, duration: 0.08, gain: 0.07 }, { freq: 320, duration: 0.08, gain: 0.07, delay: 0.05 }, { freq: 390, duration: 0.12, gain: 0.06, delay: 0.1 }],
+  move:     [{ freq: 520, duration: 0.08, gain: 0.05 }],
+  buy:      [{ freq: 660, duration: 0.1, gain: 0.07 }, { freq: 880, duration: 0.12, gain: 0.07, delay: 0.08 }],
+  rent:     [{ freq: 220, duration: 0.12, gain: 0.06 }, { freq: 170, duration: 0.14, gain: 0.06, delay: 0.09 }],
+  card:     [{ freq: 500, duration: 0.08, gain: 0.06 }, { freq: 760, duration: 0.1, gain: 0.06, delay: 0.08 }],
+  jail:     [{ freq: 145, duration: 0.2, gain: 0.07, type: 'sawtooth' }],
+  build:    [{ freq: 440, duration: 0.07, gain: 0.06 }, { freq: 554, duration: 0.08, gain: 0.06, delay: 0.06 }, { freq: 659, duration: 0.11, gain: 0.06, delay: 0.12 }],
+  sell:     [{ freq: 520, duration: 0.08, gain: 0.06 }, { freq: 390, duration: 0.1, gain: 0.06, delay: 0.07 }],
+  mortgage: [{ freq: 320, duration: 0.09, gain: 0.06 }, { freq: 280, duration: 0.12, gain: 0.06, delay: 0.08 }],
+  turn:     [{ freq: 700, duration: 0.06, gain: 0.06 }],
+  bankrupt: [{ freq: 180, duration: 0.14, gain: 0.07, type: 'sawtooth' }, { freq: 120, duration: 0.18, gain: 0.07, delay: 0.12, type: 'sawtooth' }],
+  win:      [{ freq: 523, duration: 0.08, gain: 0.07 }, { freq: 659, duration: 0.1, gain: 0.07, delay: 0.08 }, { freq: 784, duration: 0.2, gain: 0.07, delay: 0.16 }],
+};
+const DEFAULT_MUSIC_THEME = {
+  loopMs: 3200,
+  notes: [
+    { freq: 220, duration: 0.28, gain: 0.03, delay: 0.0, type: 'triangle' },
+    { freq: 277, duration: 0.28, gain: 0.03, delay: 0.35, type: 'triangle' },
+    { freq: 330, duration: 0.28, gain: 0.03, delay: 0.7, type: 'triangle' },
+    { freq: 392, duration: 0.28, gain: 0.03, delay: 1.05, type: 'triangle' },
+    { freq: 440, duration: 0.28, gain: 0.03, delay: 1.4, type: 'triangle' },
+    { freq: 392, duration: 0.28, gain: 0.03, delay: 1.75, type: 'triangle' },
+    { freq: 330, duration: 0.28, gain: 0.03, delay: 2.1, type: 'triangle' },
+    { freq: 277, duration: 0.28, gain: 0.03, delay: 2.45, type: 'triangle' },
+  ],
+};
+let sfxEnabled = true;
+let musicEnabled = true;
+let audioReady = false;
+let sfxPresets = DEFAULT_SFX_PRESETS;
+let musicTheme = DEFAULT_MUSIC_THEME;
+let audioContext = null;
+let musicLoopIntervalId = null;
+let masterGainNode = null;
 let boardScale = 1;
 let boardRotation = 0;
 let boardPanX = 0;
@@ -196,21 +235,176 @@ function setupBoardViewportControls() {
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
+  syncMusicPlayback(id);
 }
 
 // ============================================================
 // INIT
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
+  initAudioSystem();
   loadSettings();
   applySettings();
   setupMenuHandlers();
   setupLocalSetupHandlers();
   setupOnlineLobbyHandlers();
   setupGameHandlers();
+  bindGlobalButtonSfx();
   setupBoardViewportControls();
   showScreen('screen-menu');
 });
+
+function initAudioSystem() {
+  try {
+    const raw = localStorage.getItem(AUDIO_PREFS_KEY);
+    if (raw) {
+      const prefs = JSON.parse(raw);
+      sfxEnabled = prefs.sfxEnabled !== false;
+      musicEnabled = prefs.musicEnabled !== false;
+    }
+  } catch (_e) {}
+  loadAudioDefinitions();
+  audioReady = true;
+  setupAudioControls();
+}
+
+function loadAudioDefinitions() {
+  fetch(SFX_PRESET_PATH)
+    .then(res => (res.ok ? res.json() : null))
+    .then(data => {
+      if (data && typeof data === 'object') sfxPresets = data;
+    })
+    .catch(() => {});
+  fetch(MUSIC_THEME_PATH)
+    .then(res => (res.ok ? res.json() : null))
+    .then(data => {
+      if (data && Array.isArray(data.notes)) musicTheme = data;
+    })
+    .catch(() => {});
+}
+
+function setupAudioControls() {
+  const sfxBtn = document.getElementById('btn-toggle-sfx');
+  const musicBtn = document.getElementById('btn-toggle-music');
+  if (!sfxBtn || !musicBtn) return;
+  updateAudioButtons();
+  sfxBtn.addEventListener('click', () => {
+    sfxEnabled = !sfxEnabled;
+    saveAudioPrefs();
+    updateAudioButtons();
+    playSfx('click');
+  });
+  musicBtn.addEventListener('click', () => {
+    musicEnabled = !musicEnabled;
+    saveAudioPrefs();
+    updateAudioButtons();
+    syncMusicPlayback();
+    playSfx('click');
+  });
+}
+
+function bindGlobalButtonSfx() {
+  document.querySelectorAll('button').forEach(btn => {
+    if (btn.id === 'btn-toggle-sfx' || btn.id === 'btn-toggle-music') return;
+    btn.addEventListener('click', () => playSfx('click'));
+  });
+}
+
+function updateAudioButtons() {
+  const sfxBtn = document.getElementById('btn-toggle-sfx');
+  const musicBtn = document.getElementById('btn-toggle-music');
+  if (!sfxBtn || !musicBtn) return;
+  sfxBtn.textContent = `🔊 Dźwięki: ${sfxEnabled ? 'ON' : 'OFF'}`;
+  musicBtn.textContent = `🎵 Muzyka: ${musicEnabled ? 'ON' : 'OFF'}`;
+  sfxBtn.classList.toggle('disabled', !sfxEnabled);
+  musicBtn.classList.toggle('disabled', !musicEnabled);
+}
+
+function saveAudioPrefs() {
+  try {
+    localStorage.setItem(AUDIO_PREFS_KEY, JSON.stringify({ sfxEnabled, musicEnabled }));
+  } catch (_e) {}
+}
+
+function syncMusicPlayback(activeScreenId) {
+  if (!audioReady) return;
+  const activeId = activeScreenId || document.querySelector('.screen.active')?.id;
+  const shouldPlay = musicEnabled && activeId === 'screen-game';
+  if (shouldPlay) {
+    startMusicLoop();
+  } else {
+    stopMusicLoop();
+  }
+}
+
+function playSfx(name) {
+  if (!sfxEnabled) return;
+  const preset = sfxPresets[name];
+  if (!preset || !preset.length) return;
+  const ctx = ensureAudioContext();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  preset.forEach(note => scheduleTone(note, now));
+}
+
+function ensureAudioContext() {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  if (!audioContext) {
+    audioContext = new Ctx();
+    masterGainNode = audioContext.createGain();
+    masterGainNode.gain.value = 0.8;
+    masterGainNode.connect(audioContext.destination);
+  }
+  if (audioContext.state === 'suspended') audioContext.resume().catch(() => {});
+  return audioContext;
+}
+
+function scheduleTone(note, baseTime) {
+  const ctx = audioContext;
+  if (!ctx || !masterGainNode) return;
+  const osc = ctx.createOscillator();
+  const gainNode = ctx.createGain();
+  const startAt = baseTime + (note.delay || 0);
+  const duration = note.duration || 0.1;
+  const gain = note.gain || 0.05;
+  osc.type = note.type || 'sine';
+  osc.frequency.value = note.freq || 440;
+
+  gainNode.gain.setValueAtTime(0.0001, startAt);
+  gainNode.gain.exponentialRampToValueAtTime(gain, startAt + 0.01);
+  gainNode.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
+
+  osc.connect(gainNode);
+  gainNode.connect(masterGainNode);
+  osc.start(startAt);
+  osc.stop(startAt + duration + 0.02);
+}
+
+function startMusicLoop() {
+  if (musicLoopIntervalId !== null) return;
+  const ctx = ensureAudioContext();
+  if (!ctx) return;
+  playMusicPhrase();
+  const loopMs = musicTheme.loopMs || DEFAULT_MUSIC_THEME.loopMs;
+  musicLoopIntervalId = window.setInterval(playMusicPhrase, loopMs);
+}
+
+function stopMusicLoop() {
+  if (musicLoopIntervalId !== null) {
+    clearInterval(musicLoopIntervalId);
+    musicLoopIntervalId = null;
+  }
+}
+
+function playMusicPhrase() {
+  if (!musicEnabled) return;
+  const ctx = ensureAudioContext();
+  if (!ctx) return;
+  const notes = musicTheme.notes || [];
+  const now = ctx.currentTime;
+  notes.forEach(note => scheduleTone(note, now));
+}
 
 // ============================================================
 // MENU HANDLERS
@@ -1248,6 +1442,7 @@ function doRoll(gs) {
   const isDoubles = d1 === d2;
 
   addLog(gs, `${player.name} rzucił ${DICE_FACES[d1]} ${DICE_FACES[d2]}${isDoubles ? ' — DUBLET!' : ''}.`);
+  playSfx('dice');
 
   // Animate dice
   animateDiceOnBoard(d1, d2);
@@ -1319,6 +1514,7 @@ function doMove(gs, player, steps) {
     showToast(`${player.name} przeszedł przez START! +${GO_MONEY} zł`);
   }
   player.position = newPos;
+  playSfx('move');
   const spaceName = BOARD_SPACES[newPos] ? BOARD_SPACES[newPos].name : `pole ${newPos}`;
   addLog(gs, `${player.name} wylądował na: ${spaceName}.`);
   handleLanding(gs, player);
@@ -1391,6 +1587,7 @@ function handlePropertyLanding(gs, player, space) {
       owner.money  += rent;
       addLog(gs, `${player.name} zapłacił ${rent} zł czynszu graczowi ${owner.name}.`);
       showToast(`Czynsz: -${rent} zł → ${owner.name}`);
+      playSfx('rent');
       checkBankruptcy(gs, player, propState.owner);
     }
     gs.phase = 'end-turn';
@@ -1427,6 +1624,7 @@ function sendToJail(gs, player) {
   player.jailTurns = 0;
   addLog(gs, `${player.name} trafia do Izolacji!`);
   showToast(`${player.name} trafia do Izolacji! 🔒`);
+  playSfx('jail');
 }
 
 // ============================================================
@@ -1452,6 +1650,7 @@ function doDrawCard(gs, player, deck) {
   }
 
   addLog(gs, `${player.name} ciągnie kartę ${deck === 'insight' ? 'Wglądu' : 'Sesji'}: "${card.text}"`);
+  playSfx('card');
   gs.phase       = 'card';
   gs.pendingCard = { card, deck, playerId: player.id };
 }
@@ -1559,6 +1758,7 @@ function doBuy(gs) {
 
   addLog(gs, `${player.name} kupił ${space.name} za ${space.price} zł.`);
   showToast(`${player.name} kupił ${space.name}!`);
+  playSfx('buy');
   gs.pendingBuy = null;
   gs.phase      = 'end-turn';
 }
@@ -1579,6 +1779,7 @@ function doPayJail(gs) {
   player.inJail    = false;
   player.jailTurns = 0;
   addLog(gs, `${player.name} zapłacił ${JAIL_FINE} zł i wyszedł z Izolacji.`);
+  playSfx('jail');
   checkBankruptcy(gs, player, null);
   gs.phase = 'rolling';
 }
@@ -1590,6 +1791,7 @@ function doUseJailCard(gs) {
   player.inJail    = false;
   player.jailTurns = 0;
   addLog(gs, `${player.name} użył karty i wyszedł z Izolacji.`);
+  playSfx('card');
   gs.phase = 'rolling';
 }
 
@@ -1620,6 +1822,7 @@ function doEndTurn(gs) {
   gs.rolledThisTurn     = false;
 
   addLog(gs, `--- Tura gracza ${gs.players[next].name} ---`, true);
+  playSfx('turn');
 }
 
 // ============================================================
@@ -1655,6 +1858,7 @@ function checkBankruptcy(gs, player, creditorId) {
   player.bankrupt = true;
   addLog(gs, `💀 ${player.name} zbankrutował!`);
   showToast(`${player.name} zbankrutował! 💀`);
+  playSfx('bankrupt');
 
   if (creditorId !== null && gs.players[creditorId] && !gs.players[creditorId].bankrupt) {
     const creditor = gs.players[creditorId];
@@ -1679,6 +1883,7 @@ function checkBankruptcy(gs, player, creditorId) {
     gs.winner = active[0].id;
     gs.phase  = 'end';
     addLog(gs, `🏆 ${active[0].name} wygrał grę!`);
+    playSfx('win');
   }
 }
 
@@ -1769,10 +1974,12 @@ function doBuildHouse(gs, player, spaceId) {
     ps.hotel  = true;
     addLog(gs, `${player.name} zbudował hotel na ${sp.name}.`);
     showToast(`Hotel wybudowany na ${sp.name}!`);
+    playSfx('build');
   } else {
     ps.houses = (ps.houses || 0) + 1;
     addLog(gs, `${player.name} zbudował dom na ${sp.name} (${ps.houses} domów).`);
     showToast(`Dom wybudowany na ${sp.name}!`);
+    playSfx('build');
   }
 }
 
@@ -1787,10 +1994,12 @@ function doSellHouse(gs, player, spaceId) {
     ps.houses = 4;
     player.money += sell;
     addLog(gs, `${player.name} sprzedał hotel na ${sp.name} za ${sell} zł.`);
+    playSfx('sell');
   } else if (ps.houses > 0) {
     ps.houses--;
     player.money += sell;
     addLog(gs, `${player.name} sprzedał dom na ${sp.name} za ${sell} zł.`);
+    playSfx('sell');
   }
 }
 
@@ -1853,6 +2062,7 @@ function doMortgage(gs, player, spaceId) {
   ps.mortgaged = true;
   addLog(gs, `${player.name} zastawił ${sp.name} za ${sp.mortgage} zł.`);
   showToast(`Zastawiono ${sp.name} +${sp.mortgage} zł`);
+  playSfx('mortgage');
 }
 
 function doUnmortgage(gs, player, spaceId) {
@@ -1865,6 +2075,7 @@ function doUnmortgage(gs, player, spaceId) {
   ps.mortgaged = false;
   addLog(gs, `${player.name} odkupił ${sp.name} za ${cost} zł.`);
   showToast(`Odkupiono ${sp.name} -${cost} zł`);
+  playSfx('mortgage');
 }
 
 // ============================================================

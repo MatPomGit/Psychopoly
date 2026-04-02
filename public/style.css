@@ -263,6 +263,22 @@ html, body {
   overflow: hidden;
 }
 
+#audio-controls {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0 4px;
+}
+.audio-toggle-btn {
+  flex: 1;
+  font-size: .72rem;
+  padding: 6px 8px;
+  border-color: rgba(255,255,255,.25);
+}
+.audio-toggle-btn.disabled {
+  opacity: .55;
+  border-color: rgba(255,255,255,.12);
+}
+
 /* ----- Board area ----- */
 #board-area {
   flex: 1;

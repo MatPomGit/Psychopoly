@@ -1,0 +1,13 @@
+{
+  "loopMs": 3200,
+  "notes": [
+    { "freq": 220, "duration": 0.28, "gain": 0.03, "delay": 0.0, "type": "triangle" },
+    { "freq": 277, "duration": 0.28, "gain": 0.03, "delay": 0.35, "type": "triangle" },
+    { "freq": 330, "duration": 0.28, "gain": 0.03, "delay": 0.7, "type": "triangle" },
+    { "freq": 392, "duration": 0.28, "gain": 0.03, "delay": 1.05, "type": "triangle" },
+    { "freq": 440, "duration": 0.28, "gain": 0.03, "delay": 1.4, "type": "triangle" },
+    { "freq": 392, "duration": 0.28, "gain": 0.03, "delay": 1.75, "type": "triangle" },
+    { "freq": 330, "duration": 0.28, "gain": 0.03, "delay": 2.1, "type": "triangle" },
+    { "freq": 277, "duration": 0.28, "gain": 0.03, "delay": 2.45, "type": "triangle" }
+  ]
+}
