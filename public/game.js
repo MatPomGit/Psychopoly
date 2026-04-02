@@ -32,14 +32,14 @@ const MAX_ROUNDS = 12;
 const DICE_FACES = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
 
 const PHASE_LABELS = {
-  rolling:      'Rzuć kostkami',
-  buying:       'Kup lub pomiń aktywo',
-  card:         'Ciągniesz kartę…',
-  'card-select':'Kliknij odpowiedni stos kart na planszy',
-  moving:       'Pionek się porusza…',
-  'end-turn':   'Zakończ turę',
-  jailed:       'Jesteś w stanie kryzysu',
-  end:          'Koniec gry',
+  rolling:        'Rzuć kostkami',
+  buying:         'Kup lub pomiń aktywo',
+  card:           'Ciągniesz kartę…',
+  'card-select':  'Kliknij odpowiedni stos kart na planszy',
+  moving:         'Pionek się porusza…',
+  'end-turn':     'Zakończ turę',
+  jailed:         'Jesteś w stanie kryzysu',
+  end:            'Koniec gry',
 };
 
 // ============================================================
@@ -106,6 +106,18 @@ let movedPlayersLastUpdate = [];
 let isAnimating = false;
 let animatingPlayerData = null; // { playerId, animPos }
 let gameSettings = { ...(window.PSYCHOPOLY_DEFAULT_CONFIG || {}) };
+
+// Stat colors (matching CSS .stat-* classes)
+const STAT_COLORS = {
+  money:       '#f1c40f',
+  prestige:    '#b39ddb',
+  energy:      '#2ecc71',
+  ethics:      '#5dade2',
+  burnout:     '#e74c3c',
+  supervision: '#1abc9c',
+  props:       '#f39c12',
+  cards:       '#a8e6cf',
+};
 
 // ============================================================
 // UTILITIES
@@ -831,7 +843,13 @@ function startLocalGame(playerConfigs) {
   myPlayerId = 0;   // in local mode all players use same device
   localGame  = createGameState(playerConfigs);
   if (!boardRendered) { renderBoard(); boardRendered = true; }
-  document.getElementById('chat-area').style.display = 'none';
+  // Chat offline note for local mode
+  const offlineNote = document.getElementById('chat-drawer-offline-note');
+  const drawerInput = document.getElementById('chat-drawer-input');
+  const drawerSend  = document.getElementById('chat-drawer-send');
+  if (offlineNote) offlineNote.style.display = 'block';
+  if (drawerInput) drawerInput.disabled = true;
+  if (drawerSend)  drawerSend.disabled  = true;
   showScreen('screen-game');
   addLog(localGame, `--- Tura gracza ${localGame.players[0].name} ---`, true);
   updateUI(localGame);
@@ -842,7 +860,13 @@ function startLocalGame(playerConfigs) {
 // ============================================================
 function startOnlineGame(gs) {
   if (!boardRendered) { renderBoard(); boardRendered = true; }
-  document.getElementById('chat-area').style.display = 'flex';
+  // Enable chat for online mode
+  const offlineNote = document.getElementById('chat-drawer-offline-note');
+  const drawerInput = document.getElementById('chat-drawer-input');
+  const drawerSend  = document.getElementById('chat-drawer-send');
+  if (offlineNote) offlineNote.style.display = 'none';
+  if (drawerInput) drawerInput.disabled = false;
+  if (drawerSend)  drawerSend.disabled  = false;
   showScreen('screen-game');
   applyOnlineState(gs);
 }
@@ -960,9 +984,18 @@ function setupGameHandlers() {
     if (localGame) updateUI(localGame);
   });
 
-  // Chat
-  document.getElementById('chat-send').addEventListener('click', sendChatMsg);
-  document.getElementById('chat-input').addEventListener('keydown', e => {
+  // Chat drawer toggle
+  const drawerToggle = document.getElementById('chat-drawer-toggle');
+  if (drawerToggle) {
+    drawerToggle.addEventListener('click', () => {
+      const drawer = document.getElementById('chat-drawer');
+      if (drawer) drawer.classList.toggle('open');
+    });
+  }
+
+  // Chat send via drawer
+  document.getElementById('chat-drawer-send').addEventListener('click', sendChatMsg);
+  document.getElementById('chat-drawer-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') sendChatMsg();
   });
 
@@ -980,6 +1013,9 @@ function setupGameHandlers() {
       boardRendered = false;
       isAnimating = false;
       animatingPlayerData = null;
+      // Close chat drawer
+      const chatDrawer = document.getElementById('chat-drawer');
+      if (chatDrawer) chatDrawer.classList.remove('open');
       showScreen('screen-menu');
     });
   }
@@ -1011,15 +1047,16 @@ function setupGameHandlers() {
 }
 
 function sendChatMsg() {
-  const inp = document.getElementById('chat-input');
-  const text = inp.value.trim();
+  const inp = document.getElementById('chat-drawer-input');
+  const text = inp ? inp.value.trim() : '';
   if (!text || !socket) return;
   socket.emit('chat-message', { text });
   inp.value = '';
 }
 
 function appendChatMsg(name, text) {
-  const el = document.getElementById('chat-messages');
+  const el = document.getElementById('chat-drawer-messages');
+  if (!el) return;
   const msg = document.createElement('div');
   msg.className = 'chat-msg';
   msg.innerHTML = `<strong>${escHtml(name)}:</strong> ${escHtml(text)}`;
@@ -1278,6 +1315,7 @@ function updateUI(gs) {
   renderBuildingIndicators(gs);
   renderOwnershipRings(gs);
   updateSidePanel(gs);
+  updateTurnQueue(gs);
   updateActionButtons(gs);
   updateCenterInfo(gs);
   movedPlayersLastUpdate = gs.players.map(p => p.position);
@@ -1387,14 +1425,14 @@ function updateCenterInfo(gs) {
     const cardCount = cur.getOutOfJailCards || 0;
     const ownedCount = (cur.properties || []).length;
     turnStats.innerHTML = `
-      <div class="turn-stats-row"><span>💰 Gotówka</span><strong>${formatMoney(cur.money)}</strong></div>
-      <div class="turn-stats-row"><span>⭐ Prestiż</span><strong>${cur.prestige}</strong></div>
-      <div class="turn-stats-row"><span>🔋 Energia</span><strong>${cur.energy}</strong></div>
-      <div class="turn-stats-row"><span>⚖️ Etyka</span><strong>${cur.ethics}</strong></div>
-      <div class="turn-stats-row"><span>🔥 Wypalenie</span><strong>${cur.burnout}</strong></div>
-      <div class="turn-stats-row"><span>🧾 Własności</span><strong>${ownedCount}</strong></div>
-      <div class="turn-stats-row"><span>🛡️ Superwizja</span><strong>${cur.supervisionShield}</strong></div>
-      <div class="turn-stats-row"><span>🎫 Karty</span><strong>${cardCount}</strong></div>
+      <div class="turn-stats-row"><span>💰 Gotówka</span><strong class="stat-money">${formatMoney(cur.money)}</strong></div>
+      <div class="turn-stats-row"><span>⭐ Prestiż</span><strong class="stat-prestige">${cur.prestige}</strong></div>
+      <div class="turn-stats-row"><span>🔋 Energia</span><strong class="stat-energy">${cur.energy}</strong></div>
+      <div class="turn-stats-row"><span>⚖️ Etyka</span><strong class="stat-ethics">${cur.ethics}</strong></div>
+      <div class="turn-stats-row"><span>🔥 Wypalenie</span><strong class="stat-burnout">${cur.burnout}</strong></div>
+      <div class="turn-stats-row"><span>🧾 Własności</span><strong class="stat-props">${ownedCount}</strong></div>
+      <div class="turn-stats-row"><span>🛡️ Superwizja</span><strong class="stat-supervision">${cur.supervisionShield}</strong></div>
+      <div class="turn-stats-row"><span>🎫 Karty</span><strong class="stat-cards">${cardCount}</strong></div>
     `;
   }
 
@@ -1431,6 +1469,73 @@ function updateSidePanel(gs) {
   renderLogPanel(gs);
 }
 
+// ============================================================
+// TURN QUEUE BAR
+// ============================================================
+function updateTurnQueue(gs) {
+  const el = document.getElementById('turn-queue');
+  if (!el) return;
+  el.innerHTML = '';
+  const n = gs.players.length;
+  for (let i = 0; i < n; i++) {
+    const idx = (gs.currentPlayerIndex + i) % n;
+    const player = gs.players[idx];
+    const isCurrent = i === 0;
+
+    const item = document.createElement('div');
+    item.className = `tq-item${isCurrent ? ' tq-current' : ''}${player.bankrupt ? ' tq-bankrupt' : ''}`;
+
+    item.innerHTML = `
+      <div class="player-token-sm" style="background:${player.color}; background-image:url('${getPawnIcon(player.pawn)}')">${getInitial(player.name)}</div>
+      <span class="tq-name">${escHtml(player.name)}</span>
+      ${isCurrent ? '<span class="tq-turn-label">TERAZ</span>' : ''}
+    `;
+
+    item.addEventListener('mouseenter', () => showPlayerStatsTooltip(player, item));
+    item.addEventListener('mouseleave', () => hidePlayerStatsTooltip());
+
+    el.appendChild(item);
+
+    if (i < n - 1) {
+      const sep = document.createElement('div');
+      sep.className = 'tq-sep';
+      sep.textContent = '›';
+      el.appendChild(sep);
+    }
+  }
+}
+
+function showPlayerStatsTooltip(player, anchorEl) {
+  const tooltip = document.getElementById('player-stats-tooltip');
+  if (!tooltip || !anchorEl) return;
+
+  const ownedCount = (player.properties || []).length;
+  const jailStatus = player.bankrupt ? '💀 Odpadł' :
+                     player.inJail   ? `🔒 Izolacja (${player.jailTurns}/${MAX_JAIL_TURNS})` : '';
+
+  tooltip.innerHTML = `
+    <div class="pst-name" style="color:${player.color}">${escHtml(player.name)}</div>
+    <div class="pst-row"><span class="pst-label">💰 Gotówka</span><span class="stat-money">${formatMoney(player.money)}</span></div>
+    <div class="pst-row"><span class="pst-label">⭐ Prestiż</span><span class="stat-prestige">${player.prestige}</span></div>
+    <div class="pst-row"><span class="pst-label">🔋 Energia</span><span class="stat-energy">${player.energy}</span></div>
+    <div class="pst-row"><span class="pst-label">⚖️ Etyka</span><span class="stat-ethics">${player.ethics}</span></div>
+    <div class="pst-row"><span class="pst-label">🔥 Wypalenie</span><span class="stat-burnout">${player.burnout}</span></div>
+    <div class="pst-row"><span class="pst-label">🛡️ Superwizja</span><span class="stat-supervision">${player.supervisionShield}</span></div>
+    <div class="pst-row"><span class="pst-label">🧾 Własności</span><span class="stat-props">${ownedCount}</span></div>
+    ${jailStatus ? `<div class="pst-row" style="margin-top:4px;opacity:.7">${jailStatus}</div>` : ''}
+  `;
+
+  const rect = anchorEl.getBoundingClientRect();
+  tooltip.style.left = rect.left + 'px';
+  tooltip.style.top  = (rect.bottom + 6) + 'px';
+  tooltip.style.display = 'block';
+}
+
+function hidePlayerStatsTooltip() {
+  const tooltip = document.getElementById('player-stats-tooltip');
+  if (tooltip) tooltip.style.display = 'none';
+}
+
 function renderPlayersPanel(gs) {
   const list = document.getElementById('players-list-panel');
   if (!list) return;
@@ -1452,9 +1557,9 @@ function renderPlayersPanel(gs) {
       <div class="player-card-header">
         <div class="player-token-sm" style="background:${player.color}; background-image:url('${getPawnIcon(player.pawn)}')">${getInitial(player.name)}</div>
         <div class="player-name-label">${escHtml(player.name)}</div>
-        <div class="player-money-label">${formatMoney(player.money)} · ⭐${player.prestige}</div>
+        <div class="player-money-label"><span class="stat-money">${formatMoney(player.money)}</span> · <span class="stat-prestige">⭐${player.prestige}</span></div>
       </div>
-      <div class="player-status-row">${statusText} · 🔋${player.energy} ⚖️${player.ethics} 🔥${player.burnout} · Pole: ${player.position}</div>
+      <div class="player-status-row">${statusText} · <span class="stat-energy">🔋${player.energy}</span> <span class="stat-ethics">⚖️${player.ethics}</span> <span class="stat-burnout">🔥${player.burnout}</span> · Pole: ${player.position}</div>
       <div class="player-props-mini">${propDots}</div>`;
     list.appendChild(card);
   });
