@@ -210,45 +210,45 @@ function rollDie() { return Math.floor(Math.random() * 6) + 1; }
 
 const BOARD_SPACES_SERVER = [
   { id: 0,  type: 'go'         },
-  { id: 1,  type: 'property',  group: 'purple',    price: 60,  rent: [2,10,30,90,160,250],       houseCost: 50,  mortgage: 30 },
+  { id: 1,  type: 'property',  group: 'purple',    price: 60,  rent: [2,10,30,90,160,250],       houseCost: 50,  hotelCost: 50,  mortgage: 30 },
   { id: 2,  type: 'card',      deck: 'session'  },
-  { id: 3,  type: 'property',  group: 'purple',    price: 60,  rent: [4,20,60,180,320,450],       houseCost: 50,  mortgage: 30 },
+  { id: 3,  type: 'property',  group: 'purple',    price: 60,  rent: [4,20,60,180,320,450],       houseCost: 50,  hotelCost: 50,  mortgage: 30 },
   { id: 4,  type: 'tax',       amount: 200      },
   { id: 5,  type: 'railroad',  price: 200,  mortgage: 100 },
-  { id: 6,  type: 'property',  group: 'lightblue', price: 100, rent: [6,30,90,270,400,550],       houseCost: 50,  mortgage: 50 },
+  { id: 6,  type: 'property',  group: 'lightblue', price: 100, rent: [6,30,90,270,400,550],       houseCost: 50,  hotelCost: 50,  mortgage: 50 },
   { id: 7,  type: 'card',      deck: 'insight'  },
-  { id: 8,  type: 'property',  group: 'lightblue', price: 100, rent: [6,30,90,270,400,550],       houseCost: 50,  mortgage: 50 },
-  { id: 9,  type: 'property',  group: 'lightblue', price: 120, rent: [8,40,100,300,450,600],      houseCost: 50,  mortgage: 60 },
+  { id: 8,  type: 'property',  group: 'lightblue', price: 100, rent: [6,30,90,270,400,550],       houseCost: 50,  hotelCost: 50,  mortgage: 50 },
+  { id: 9,  type: 'property',  group: 'lightblue', price: 120, rent: [8,40,100,300,450,600],      houseCost: 50,  hotelCost: 50,  mortgage: 60 },
   { id: 10, type: 'jail'       },
-  { id: 11, type: 'property',  group: 'pink',      price: 140, rent: [10,50,150,450,625,750],     houseCost: 100, mortgage: 70 },
+  { id: 11, type: 'property',  group: 'pink',      price: 140, rent: [10,50,150,450,625,750],     houseCost: 100, hotelCost: 100, mortgage: 70 },
   { id: 12, type: 'utility',   price: 150,  mortgage: 75  },
-  { id: 13, type: 'property',  group: 'pink',      price: 140, rent: [10,50,150,450,625,750],     houseCost: 100, mortgage: 70 },
+  { id: 13, type: 'property',  group: 'pink',      price: 140, rent: [10,50,150,450,625,750],     houseCost: 100, hotelCost: 100, mortgage: 70 },
   { id: 14, type: 'railroad',  price: 200,  mortgage: 100 },
-  { id: 15, type: 'property',  group: 'pink',      price: 160, rent: [12,60,180,500,700,900],     houseCost: 100, mortgage: 80 },
+  { id: 15, type: 'property',  group: 'pink',      price: 160, rent: [12,60,180,500,700,900],     houseCost: 100, hotelCost: 100, mortgage: 80 },
   { id: 16, type: 'card',      deck: 'session'  },
-  { id: 17, type: 'property',  group: 'orange',    price: 180, rent: [14,70,200,550,750,950],     houseCost: 100, mortgage: 90 },
+  { id: 17, type: 'property',  group: 'orange',    price: 180, rent: [14,70,200,550,750,950],     houseCost: 100, hotelCost: 100, mortgage: 90 },
   { id: 18, type: 'utility',   price: 150,  mortgage: 75  },
-  { id: 19, type: 'property',  group: 'orange',    price: 200, rent: [16,80,220,600,800,1000],    houseCost: 100, mortgage: 100 },
+  { id: 19, type: 'property',  group: 'orange',    price: 200, rent: [16,80,220,600,800,1000],    houseCost: 100, hotelCost: 100, mortgage: 100 },
   { id: 20, type: 'freeparking' },
-  { id: 21, type: 'property',  group: 'red',       price: 220, rent: [18,90,250,700,875,1050],    houseCost: 150, mortgage: 110 },
+  { id: 21, type: 'property',  group: 'red',       price: 220, rent: [18,90,250,700,875,1050],    houseCost: 150, hotelCost: 150, mortgage: 110 },
   { id: 22, type: 'card',      deck: 'insight'  },
-  { id: 23, type: 'property',  group: 'red',       price: 220, rent: [18,90,250,700,875,1050],    houseCost: 150, mortgage: 110 },
+  { id: 23, type: 'property',  group: 'red',       price: 220, rent: [18,90,250,700,875,1050],    houseCost: 150, hotelCost: 150, mortgage: 110 },
   { id: 24, type: 'railroad',  price: 200,  mortgage: 100 },
-  { id: 25, type: 'property',  group: 'yellow',    price: 260, rent: [22,110,330,800,975,1150],   houseCost: 150, mortgage: 130 },
-  { id: 26, type: 'property',  group: 'yellow',    price: 260, rent: [22,110,330,800,975,1150],   houseCost: 150, mortgage: 130 },
+  { id: 25, type: 'property',  group: 'yellow',    price: 260, rent: [22,110,330,800,975,1150],   houseCost: 150, hotelCost: 150, mortgage: 130 },
+  { id: 26, type: 'property',  group: 'yellow',    price: 260, rent: [22,110,330,800,975,1150],   houseCost: 150, hotelCost: 150, mortgage: 130 },
   { id: 27, type: 'card',      deck: 'session'  },
-  { id: 28, type: 'property',  group: 'yellow',    price: 280, rent: [24,120,360,850,1025,1200],  houseCost: 150, mortgage: 140 },
+  { id: 28, type: 'property',  group: 'yellow',    price: 280, rent: [24,120,360,850,1025,1200],  houseCost: 150, hotelCost: 150, mortgage: 140 },
   { id: 29, type: 'railroad',  price: 200,  mortgage: 100 },
   { id: 30, type: 'gotojail'  },
-  { id: 31, type: 'property',  group: 'green',     price: 300, rent: [26,130,390,900,1100,1275],  houseCost: 200, mortgage: 150 },
-  { id: 32, type: 'property',  group: 'green',     price: 300, rent: [26,130,390,900,1100,1275],  houseCost: 200, mortgage: 150 },
+  { id: 31, type: 'property',  group: 'green',     price: 300, rent: [26,130,390,900,1100,1275],  houseCost: 200, hotelCost: 200, mortgage: 150 },
+  { id: 32, type: 'property',  group: 'green',     price: 300, rent: [26,130,390,900,1100,1275],  houseCost: 200, hotelCost: 200, mortgage: 150 },
   { id: 33, type: 'card',      deck: 'insight'  },
   { id: 34, type: 'tax',       amount: 100      },
   { id: 35, type: 'railroad',  price: 200,  mortgage: 100 },
-  { id: 36, type: 'property',  group: 'darkblue',  price: 350, rent: [35,175,500,1100,1300,1500], houseCost: 200, mortgage: 175 },
+  { id: 36, type: 'property',  group: 'darkblue',  price: 350, rent: [35,175,500,1100,1300,1500], houseCost: 200, hotelCost: 200, mortgage: 175 },
   { id: 37, type: 'card',      deck: 'session'  },
-  { id: 38, type: 'property',  group: 'darkblue',  price: 400, rent: [50,200,600,1400,1700,2000], houseCost: 200, mortgage: 200 },
-  { id: 39, type: 'property',  group: 'darkblue',  price: 400, rent: [50,200,600,1400,1700,2000], houseCost: 200, mortgage: 200 },
+  { id: 38, type: 'property',  group: 'darkblue',  price: 400, rent: [50,200,600,1400,1700,2000], houseCost: 200, hotelCost: 200, mortgage: 200 },
+  { id: 39, type: 'property',  group: 'darkblue',  price: 400, rent: [50,200,600,1400,1700,2000], houseCost: 200, hotelCost: 200, mortgage: 200 },
 ];
 
 const INSIGHT_CARDS_SERVER = [
@@ -547,14 +547,14 @@ function doDrawCard(gs, player, deck) {
       gs.insightDiscard = [];
     }
     card = gs.insightCards.pop();
-    gs.insightDiscard.push(card);
+    if (card.action !== 'get-out-jail') gs.insightDiscard.push(card);
   } else {
     if (gs.sessionCards.length === 0) {
       gs.sessionCards = shuffleArray([...gs.sessionDiscard]);
       gs.sessionDiscard = [];
     }
     card = gs.sessionCards.pop();
-    gs.sessionDiscard.push(card);
+    if (card.action !== 'get-out-jail') gs.sessionDiscard.push(card);
   }
   gs.pendingCard = { card, playerId: player.id, deck };
   gs.phase = 'card';
@@ -712,8 +712,8 @@ function handleBuildHouse(gs, player, spaceId) {
   if (propState.hotel) return;
   if (propState.houses >= 4) {
     // Upgrade to hotel
-    if (player.money < space.houseCost) return;
-    player.money -= space.houseCost;
+    if (player.money < space.hotelCost) return;
+    player.money -= space.hotelCost;
     propState.houses = 0;
     propState.hotel = true;
     addLog(gs, `${player.name} zbudował hotel na polu ${spaceId}.`);
@@ -734,7 +734,7 @@ function handleSellHouse(gs, player, spaceId) {
   const propState = gs.properties[spaceId];
   if (!propState || propState.owner !== player.id) return;
 
-  const sellPrice = Math.floor(space.houseCost / 2);
+  const sellPrice = propState.hotel ? Math.floor(space.hotelCost / 2) : Math.floor(space.houseCost / 2);
   if (propState.hotel) {
     propState.hotel = false;
     propState.houses = 4;
