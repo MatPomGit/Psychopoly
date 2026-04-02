@@ -491,8 +491,14 @@ html, body {
   background-size: 70%;
 }
 .player-token.active {
-  transform: scale(1.08);
-  box-shadow: 0 0 0 2px rgba(255,255,255,.65), 0 0 12px rgba(241,196,15,.9);
+  transform: scale(1.18);
+  box-shadow: 0 0 0 2px rgba(255,255,255,.9), 0 0 18px rgba(241,196,15,1);
+  z-index: 10;
+  animation: tokenPulse 1.4s ease-in-out infinite;
+}
+@keyframes tokenPulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(255,255,255,.85), 0 0 10px rgba(241,196,15,.9); transform: scale(1.15); }
+  50%       { box-shadow: 0 0 0 3px rgba(255,255,255,1),  0 0 24px rgba(241,196,15,1);  transform: scale(1.25); }
 }
 
 /* ----- Board Center ----- */
@@ -1045,4 +1051,68 @@ body.quality-high #board {
   #side-panel { width: 100%; height: 200px; flex-direction: row; }
   #panel-tabs { flex-direction: column; width: 60px; }
   :root { --corner-size: 48px; --cell-w: 32px; }
+}
+
+/* ============================================================
+   SPACE HOVER TOOLTIP
+   ============================================================ */
+.space-tooltip {
+  position: fixed;
+  z-index: 200;
+  background: rgba(15, 30, 54, .97);
+  color: #fff;
+  border: 1px solid rgba(26, 188, 156, .65);
+  border-radius: 9px;
+  padding: 8px 13px;
+  font-size: .78rem;
+  max-width: 210px;
+  pointer-events: none;
+  box-shadow: 0 6px 20px rgba(0,0,0,.5);
+  display: none;
+  transform: translate(-50%, calc(-100% - 8px));
+  line-height: 1.4;
+}
+.space-tooltip-name {
+  font-weight: 700;
+  color: var(--teal-light);
+  margin-bottom: 4px;
+  font-size: .82rem;
+}
+.space-tooltip-desc { opacity: .88; }
+
+/* ============================================================
+   CARD DECK PILES (board center)
+   ============================================================ */
+.center-decks {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.card-deck-pile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 7px 11px;
+  border-radius: 10px;
+  border: 2px solid rgba(0,0,0,.2);
+  cursor: pointer;
+  transition: transform .15s, box-shadow .2s;
+  min-width: 70px;
+  user-select: none;
+}
+.card-deck-pile:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,.35); }
+.deck-insight { background: linear-gradient(135deg, #f39c12, #e67e22); color: #fff; }
+.deck-session  { background: linear-gradient(135deg, #3498db, #2980b9); color: #fff; }
+.deck-icon  { font-size: 18px; line-height: 1; }
+.deck-name  { font-size: 9px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; text-align: center; }
+.deck-count { font-size: 8px; }
+.card-deck-pile.deck-active {
+  animation: deckPulse 1s ease-in-out infinite;
+}
+@keyframes deckPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,80,.9);  transform: scale(1);    }
+  50%       { box-shadow: 0 0 0 9px rgba(255,255,80,0); transform: scale(1.07); }
 }
