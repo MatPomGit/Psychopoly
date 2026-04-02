@@ -156,7 +156,43 @@ html, body {
 .player-count-btns .btn.active { background: var(--teal-light); color: var(--navy-dark); }
 
 #player-names-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
-.player-name-row { display: flex; align-items: center; gap: 10px; }
+.player-name-row { display: flex; align-items: flex-start; gap: 10px; }
+.ai-toggle-btn {
+  flex-shrink: 0;
+  margin-top: 4px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,.35);
+  background: rgba(255,255,255,.08);
+  color: rgba(255,255,255,.7);
+  cursor: pointer;
+  font-size: .8rem;
+  white-space: nowrap;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.ai-toggle-btn.active {
+  background: rgba(26,188,156,.25);
+  border-color: var(--teal-light);
+  color: var(--teal-light);
+}
+.player-name-row.ai-player .player-name-input {
+  opacity: .55;
+}
+.player-card-panel .ai-badge {
+  font-size: .65rem;
+  background: rgba(26,188,156,.25);
+  color: var(--teal-light);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.ai-thinking-indicator {
+  font-size: .78rem;
+  opacity: .7;
+  font-style: italic;
+  padding: 4px 0;
+}
 .player-color-dot {
   width: 20px; height: 20px;
   border-radius: 50%;
