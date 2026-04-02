@@ -10,13 +10,17 @@ const app = express();
 const httpServer = http.createServer(app);
 const io = new Server(httpServer);
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use('/public', express.static(path.join(__dirname, 'public')));
+app.use('/assets', express.static(path.join(__dirname, 'assets')));
+app.get('/', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 // ============================================================
 // IN-MEMORY ROOM STORAGE
 // ============================================================
 // rooms: Map<roomId, roomState>
-// roomState: { id, hostSocketId, players: [{socketId, playerId, name}], gameState, started }
+// roomState: { id, hostSocketId, players: [{socketId, playerId, name, color, pawn}], gameState, started }
 const rooms = new Map();
 
 function generateRoomId() {
@@ -32,19 +36,23 @@ io.on('connection', (socket) => {
   // ----------------------------------------------------------
   // create-room: { playerName }
   // ----------------------------------------------------------
-  socket.on('create-room', ({ playerName }) => {
+  socket.on('create-room', ({ playerName, color, pawn }) => {
     if (!playerName || typeof playerName !== 'string') {
       socket.emit('error', { message: 'Nieprawidłowa nazwa gracza.' });
       return;
     }
-    const trimmed = playerName.trim().slice(0, 20);
+    const profile = sanitizePlayerProfile({ playerName, color, pawn }, 0);
+    if (!profile.name) {
+      socket.emit('error', { message: 'Nieprawidłowa nazwa gracza.' });
+      return;
+    }
     const roomId = generateRoomId();
     const playerId = 0;
 
     const roomState = {
       id: roomId,
       hostSocketId: socket.id,
-      players: [{ socketId: socket.id, playerId, name: trimmed }],
+      players: [{ socketId: socket.id, playerId, name: profile.name, color: profile.color, pawn: profile.pawn }],
       gameState: null,
       started: false,
     };
@@ -53,20 +61,20 @@ io.on('connection', (socket) => {
     socket.join(roomId);
     socket.data.roomId = roomId;
     socket.data.playerId = playerId;
-    socket.data.playerName = trimmed;
+    socket.data.playerName = profile.name;
 
     socket.emit('room-created', {
       roomId,
       playerId,
-      players: roomState.players.map(p => ({ playerId: p.playerId, name: p.name })),
+      players: roomState.players.map(p => ({ playerId: p.playerId, name: p.name, color: p.color, pawn: p.pawn })),
     });
-    console.log(`[room-created] ${roomId} by ${trimmed}`);
+    console.log(`[room-created] ${roomId} by ${profile.name}`);
   });
 
   // ----------------------------------------------------------
   // join-room: { roomId, playerName }
   // ----------------------------------------------------------
-  socket.on('join-room', ({ roomId, playerName }) => {
+  socket.on('join-room', ({ roomId, playerName, color, pawn }) => {
     const room = rooms.get(roomId);
     if (!room) {
       socket.emit('error', { message: `Pokój ${roomId} nie istnieje.` });
@@ -84,19 +92,35 @@ io.on('connection', (socket) => {
       socket.emit('error', { message: 'Nieprawidłowa nazwa gracza.' });
       return;
     }
-    const trimmed = playerName.trim().slice(0, 20);
+    const profile = sanitizePlayerProfile({ playerName, color, pawn }, room.players.length);
+    if (!profile.name) {
+      socket.emit('error', { message: 'Nieprawidłowa nazwa gracza.' });
+      return;
+    }
+    if (room.players.some(p => p.name.toLowerCase() === profile.name.toLowerCase())) {
+      socket.emit('error', { message: 'To imię gracza jest już zajęte.' });
+      return;
+    }
+    if (room.players.some(p => p.color === profile.color)) {
+      socket.emit('error', { message: 'Ten kolor jest już zajęty w pokoju.' });
+      return;
+    }
+    if (room.players.some(p => p.pawn === profile.pawn)) {
+      socket.emit('error', { message: 'Ten pionek jest już zajęty w pokoju.' });
+      return;
+    }
     const playerId = room.players.length;
 
-    room.players.push({ socketId: socket.id, playerId, name: trimmed });
+    room.players.push({ socketId: socket.id, playerId, name: profile.name, color: profile.color, pawn: profile.pawn });
     socket.join(roomId);
     socket.data.roomId = roomId;
     socket.data.playerId = playerId;
-    socket.data.playerName = trimmed;
+    socket.data.playerName = profile.name;
 
-    const playerList = room.players.map(p => ({ playerId: p.playerId, name: p.name }));
+    const playerList = room.players.map(p => ({ playerId: p.playerId, name: p.name, color: p.color, pawn: p.pawn }));
     socket.emit('room-joined', { roomId, playerId, players: playerList });
     socket.to(roomId).emit('player-joined', { players: playerList });
-    console.log(`[join-room] ${trimmed} joined ${roomId} as player ${playerId}`);
+    console.log(`[join-room] ${profile.name} joined ${roomId} as player ${playerId}`);
   });
 
   // ----------------------------------------------------------
@@ -115,7 +139,7 @@ io.on('connection', (socket) => {
       return;
     }
     room.started = true;
-    room.gameState = createServerGameState(room.players.map(p => ({ name: p.name })));
+    room.gameState = createServerGameState(room.players.map(p => ({ name: p.name, color: p.color, pawn: p.pawn })));
     io.to(roomId).emit('game-started', sanitizeState(room.gameState));
     console.log(`[start-game] Room ${roomId} started with ${room.players.length} players`);
   });
@@ -174,8 +198,9 @@ io.on('connection', (socket) => {
         if (room.hostSocketId === socket.id) {
           room.hostSocketId = room.players[0].socketId;
         }
+        room.players.forEach((p, idx) => { p.playerId = idx; });
         io.to(roomId).emit('player-joined', {
-          players: room.players.map(p => ({ playerId: p.playerId, name: p.name })),
+          players: room.players.map(p => ({ playerId: p.playerId, name: p.name, color: p.color, pawn: p.pawn })),
         });
       }
     } else {
@@ -322,18 +347,28 @@ const SESSION_CARDS_SERVER = [
 ];
 
 const PLAYER_COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12'];
+const AVAILABLE_COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#f1c40f', '#1abc9c', '#ffffff'];
+const PAWN_IDS = ['brain', 'lamp', 'rocket', 'star', 'puzzle', 'book'];
 const STARTING_MONEY = 1500;
 const GO_MONEY = 200;
 const JAIL_POSITION = 10;
 const JAIL_FINE = 50;
 const MAX_JAIL_TURNS = 3;
 
+function sanitizePlayerProfile({ playerName, color, pawn }, fallbackIndex = 0) {
+  const name = String(playerName || '').trim().slice(0, 20);
+  const safeColor = AVAILABLE_COLORS.includes(color) ? color : PLAYER_COLORS[fallbackIndex % PLAYER_COLORS.length];
+  const safePawn = PAWN_IDS.includes(pawn) ? pawn : PAWN_IDS[fallbackIndex % PAWN_IDS.length];
+  return { name, color: safeColor, pawn: safePawn };
+}
+
 function createServerGameState(playerConfigs) {
   return {
     players: playerConfigs.map((p, i) => ({
       id: i,
       name: p.name,
-      color: PLAYER_COLORS[i],
+      color: p.color || PLAYER_COLORS[i],
+      pawn: p.pawn || PAWN_IDS[i % PAWN_IDS.length],
       money: STARTING_MONEY,
       position: 0,
       inJail: false,
