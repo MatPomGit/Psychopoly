@@ -18,10 +18,7 @@ const PAWN_OPTIONS = [
   { id: 'puzzle', name: 'Puzzle',    icon: 'assets/pawns/puzzle.svg' },
   { id: 'book',   name: 'Książka',   icon: 'assets/pawns/book.svg' },
 ];
-const STARTING_MONEY   = 1500;
-const GO_MONEY         = 200;
 const JAIL_POSITION    = 14;
-const JAIL_FINE        = 50;
 const MAX_JAIL_TURNS   = 3;
 const STARTING_PRESTIGE = 10;
 const STARTING_ENERGY = 50;
@@ -42,6 +39,16 @@ const PHASE_LABELS = {
   'end-turn':     'Zakończ turę',
   jailed:         'Jesteś w stanie kryzysu',
   end:            'Koniec gry',
+};
+const PHASE_CHECKLIST_STEP = {
+  rolling: 0,
+  jailed: 0,
+  moving: 1,
+  buying: 2,
+  card: 2,
+  'card-select': 2,
+  'end-turn': 3,
+  end: 3,
 };
 
 // ============================================================
@@ -110,6 +117,12 @@ let isAnimating = false;
 let animatingPlayerData = null; // { playerId, animPos }
 let gameSettings = { ...(window.PSYCHOPOLY_DEFAULT_CONFIG || {}) };
 let logFilterMode = 'all';
+const BALANCE_PRESETS = window.PSYCHOPOLY_BALANCE_PRESETS || {};
+const DEFAULT_BALANCE_PRESET = (window.PSYCHOPOLY_DEFAULT_CONFIG && window.PSYCHOPOLY_DEFAULT_CONFIG.balancePreset) || "standard";
+let activeBalanceProfile = null;
+let ACTIVE_BOARD_SPACES = [...BOARD_SPACES];
+let ACTIVE_INSIGHT_CARDS = [...INSIGHT_CARDS];
+let ACTIVE_SESSION_CARDS = [...SESSION_CARDS];
 let onboardingStepIndex = 0;
 let onboardingActive = false;
 let onboardingShownThisSession = false;
@@ -157,6 +170,46 @@ const STAT_COLORS = {
   props:       '#f39c12',
   cards:       '#a8e6cf',
 };
+
+function roundMoney(value) {
+  return Math.round(value);
+}
+
+function getBalancePresetKey() {
+  const key = gameSettings.balancePreset || DEFAULT_BALANCE_PRESET;
+  return BALANCE_PRESETS[key] ? key : DEFAULT_BALANCE_PRESET;
+}
+
+function getBalanceProfile() {
+  const standard = BALANCE_PRESETS.standard || {};
+  const selected = BALANCE_PRESETS[getBalancePresetKey()] || {};
+  return { ...standard, ...selected, name: getBalancePresetKey() };
+}
+
+function withCardMoneyMultiplier(card, multiplier) {
+  const next = { ...card };
+  ['money', 'amount', 'perHouse', 'perHotel'].forEach((field) => {
+    if (typeof next[field] === 'number') next[field] = roundMoney(next[field] * multiplier);
+  });
+  return next;
+}
+
+function applyBalanceProfileFromSettings() {
+  activeBalanceProfile = getBalanceProfile();
+  ACTIVE_BOARD_SPACES = BOARD_SPACES.map((space) => {
+    const next = { ...space };
+    if (space.type === 'property') {
+      next.houseCost = roundMoney(space.houseCost * activeBalanceProfile.developmentCostMultiplier);
+      next.hotelCost = roundMoney(space.hotelCost * activeBalanceProfile.developmentCostMultiplier);
+    }
+    if (space.type === 'tax' && typeof space.amount === 'number') {
+      next.amount = roundMoney(space.amount * activeBalanceProfile.penaltyMultiplier);
+    }
+    return next;
+  });
+  ACTIVE_INSIGHT_CARDS = INSIGHT_CARDS.map((card) => withCardMoneyMultiplier(card, activeBalanceProfile.cardMoneyMultiplier));
+  ACTIVE_SESSION_CARDS = SESSION_CARDS.map((card) => withCardMoneyMultiplier(card, activeBalanceProfile.cardMoneyMultiplier));
+}
 
 // ============================================================
 // UTILITIES
@@ -272,6 +325,7 @@ function loadSettings() {
   } catch (_e) {
     gameSettings = { ...defaults };
   }
+  applyBalanceProfileFromSettings();
 }
 
 function saveSettings() {
@@ -290,10 +344,12 @@ function syncSettingsForm() {
   const anim = document.getElementById('setting-animation-speed');
   const font = document.getElementById('setting-font-scale');
   const quality = document.getElementById('setting-render-quality');
+  const balancePreset = document.getElementById('setting-balance-preset');
   const fx = document.getElementById('setting-fx-intensity');
   if (anim) anim.value = String(gameSettings.animationSpeed || 1);
   if (font) font.value = String(gameSettings.fontScale || 1);
   if (quality) quality.value = gameSettings.renderQuality || 'high';
+  if (balancePreset) balancePreset.value = getBalancePresetKey();
   if (fx) fx.value = String(gameSettings.boardFxIntensity || 1);
   refreshSettingsLiveLabels();
 }
@@ -1047,7 +1103,7 @@ function createGameState(playerConfigs) {
       color:              p.color || PLAYER_COLORS[i],
       pawn:               p.pawn || PAWN_OPTIONS[i % PAWN_OPTIONS.length].id,
       isAI:               p.isAI || false,
-      money:              STARTING_MONEY,
+      money:              activeBalanceProfile.startingMoney,
       prestige:           STARTING_PRESTIGE,
       energy:             STARTING_ENERGY,
       ethics:             STARTING_ETHICS,
@@ -1067,8 +1123,8 @@ function createGameState(playerConfigs) {
     doubles:         0,
     turn:            0,
     roundsCompleted: 0,
-    insightCards:    shuffleArray([...INSIGHT_CARDS]),
-    sessionCards:    shuffleArray([...SESSION_CARDS]),
+    insightCards:    shuffleArray([...ACTIVE_INSIGHT_CARDS]),
+    sessionCards:    shuffleArray([...ACTIVE_SESSION_CARDS]),
     insightDiscard:  [],
     sessionDiscard:  [],
     log:             [],
@@ -1086,9 +1142,11 @@ function createGameState(playerConfigs) {
 function startLocalGame(playerConfigs) {
   gameMode  = 'local';
   myPlayerId = 0;   // in local mode all players use same device
+  applyBalanceProfileFromSettings();
   localGame  = createGameState(playerConfigs);
   aiStepPending = false;
-  if (!boardRendered) { renderBoard(); boardRendered = true; }
+  renderBoard();
+  boardRendered = true;
   // Chat offline note for local mode
   const offlineNote = document.getElementById('chat-drawer-offline-note');
   const drawerInput = document.getElementById('chat-drawer-input');
@@ -1097,6 +1155,7 @@ function startLocalGame(playerConfigs) {
   if (drawerInput) drawerInput.disabled = true;
   if (drawerSend)  drawerSend.disabled  = true;
   showScreen('screen-game');
+  showToast(`Preset balansu: ${activeBalanceProfile.label}`);
   addLog(localGame, `--- Tura gracza ${localGame.players[0].name} ---`, true);
   updateUI(localGame);
   window.setTimeout(maybeStartOnboarding, 180);
@@ -1328,6 +1387,7 @@ function setupGameHandlers() {
   if (btnSettingsReset) {
     btnSettingsReset.addEventListener('click', () => {
       gameSettings = { ...(window.PSYCHOPOLY_DEFAULT_CONFIG || {}) };
+      applyBalanceProfileFromSettings();
       applySettings();
       syncSettingsForm();
       saveSettings();
@@ -1342,6 +1402,8 @@ function setupGameHandlers() {
       gameSettings.fontScale = parseFloat(document.getElementById('setting-font-scale').value) || 1;
       gameSettings.renderQuality = document.getElementById('setting-render-quality').value || 'high';
       gameSettings.boardFxIntensity = parseFloat(document.getElementById('setting-fx-intensity').value) || 1;
+      gameSettings.balancePreset = document.getElementById('setting-balance-preset').value || DEFAULT_BALANCE_PRESET;
+      applyBalanceProfileFromSettings();
       applySettings();
       saveSettings();
       closeModal('modal-settings');
@@ -1383,7 +1445,7 @@ function renderBoard() {
   const board = document.getElementById('board');
   board.innerHTML = '';
 
-  BOARD_SPACES.forEach(space => {
+  ACTIVE_BOARD_SPACES.forEach(space => {
     const pos = GRID_POSITIONS[space.id];
     const cell = document.createElement('div');
     cell.id    = `space-${space.id}`;
@@ -1692,7 +1754,7 @@ function renderBuildingIndicators(gs) {
 }
 
 function renderOwnershipRings(gs) {
-  BOARD_SPACES.forEach(space => {
+  ACTIVE_BOARD_SPACES.forEach(space => {
     const el = document.getElementById(`space-${space.id}`);
     if (!el) return;
     const ps = gs.properties[space.id];
@@ -1778,6 +1840,64 @@ function updateSidePanel(gs) {
   renderLogPanel(gs);
 }
 
+function getTurnGuidance(gs, { cur, myTurn, curIsAI }) {
+  const phase = gs.phase;
+  const phaseLabel = PHASE_LABELS[phase] || phase;
+  let recommendedMove = phaseLabel;
+
+  if (curIsAI) {
+    recommendedMove = 'Poczekaj, aż AI zakończy ruch.';
+  } else if (!myTurn) {
+    recommendedMove = 'Poczekaj na ruch aktywnego gracza.';
+  } else if (phase === 'rolling') {
+    if (cur.inJail) {
+      recommendedMove = cur.getOutOfJailCards > 0
+        ? 'Użyj karty wyjścia z kryzysu lub opłać karę.'
+        : 'Opłać karę albo rzuć kostkami.';
+    } else {
+      recommendedMove = 'Rzuć kostkami.';
+    }
+  } else if (phase === 'end-turn') {
+    recommendedMove = gs.doubles > 0
+      ? 'Masz dublet — rzuć kostkami ponownie.'
+      : 'Zakończ turę.';
+  } else if (phase === 'buying') {
+    recommendedMove = 'Wybierz: kup lub pomiń aktywo.';
+  } else if (phase === 'card-select') {
+    recommendedMove = gs.pendingCardDeck === 'insight'
+      ? 'Kliknij stos „Superwizja” na planszy.'
+      : 'Kliknij stos „Sesja” na planszy.';
+  } else if (phase === 'moving') {
+    recommendedMove = 'Poczekaj na zakończenie ruchu pionka.';
+  }
+
+  return {
+    phaseLabel,
+    recommendedMove,
+    checklistStep: PHASE_CHECKLIST_STEP[phase] ?? 0
+  };
+}
+
+function updateTurnStatusPanel(gs, { cur, myTurn, curIsAI, guidance }) {
+  const playerEl = document.getElementById('turn-status-player');
+  const phaseEl = document.getElementById('turn-status-phase');
+  const recEl = document.getElementById('turn-status-recommendation');
+  if (playerEl) {
+    if (gameMode === 'online' && !myTurn) playerEl.textContent = `${cur.name} (przeciwnik)`;
+    else if (curIsAI) playerEl.textContent = `${cur.name} 🤖`;
+    else playerEl.textContent = cur.name;
+    playerEl.style.color = cur.color;
+  }
+  if (phaseEl) phaseEl.textContent = guidance.phaseLabel;
+  if (recEl) recEl.textContent = guidance.recommendedMove;
+
+  document.querySelectorAll('#turn-checklist [data-step]').forEach((stepEl) => {
+    const step = Number(stepEl.dataset.step);
+    stepEl.classList.toggle('is-current', step === guidance.checklistStep);
+    stepEl.classList.toggle('is-done', step < guidance.checklistStep);
+  });
+}
+
 // ============================================================
 // TURN QUEUE BAR
 // ============================================================
@@ -1853,7 +1973,7 @@ function renderPlayersPanel(gs) {
     const card = document.createElement('div');
     card.className = `player-card-panel${i === gs.currentPlayerIndex ? ' active-turn' : ''}${player.bankrupt ? ' bankrupt' : ''}`;
     const propDots = player.properties.map(spaceId => {
-      const sp = BOARD_SPACES[spaceId];
+      const sp = ACTIVE_BOARD_SPACES[spaceId];
       const color = sp && sp.group ? GROUP_COLORS[sp.group] : '#999';
       return `<span class="prop-mini-dot" style="background:${color}" title="${sp ? sp.name : spaceId}"></span>`;
     }).join('');
@@ -1884,7 +2004,7 @@ function renderPropertiesPanel(gs) {
   groups['railroad'] = [];
   groups['utility']  = [];
 
-  BOARD_SPACES.forEach(space => {
+  ACTIVE_BOARD_SPACES.forEach(space => {
     const ps = gs.properties[space.id];
     if (!ps) return;
     const owner = gs.players[ps.owner];
@@ -1957,7 +2077,7 @@ function updateActionButtons(gs) {
   const myTurn = !curIsAI && (gameMode === 'local' || gs.currentPlayerIndex === myPlayerId);
 
   const phase = gs.phase;
-  let nextStepText = PHASE_LABELS[phase] || phase;
+  const guidance = getTurnGuidance(gs, { cur, myTurn, curIsAI });
   let primaryNextButtonId = null;
 
   const actionButtonIds = [
@@ -1994,13 +2114,14 @@ function updateActionButtons(gs) {
       banner.style.color = myTurn ? cur.color : 'rgba(255,255,255,.45)';
     }
   }
+  updateTurnStatusPanel(gs, { cur, myTurn, curIsAI, guidance });
 
   const phaseInfo = document.getElementById('phase-info');
   if (phaseInfo) {
     if (curIsAI) {
       phaseInfo.innerHTML = `<span class="ai-thinking-indicator">Status fazy: 🤖 AI myśli…</span>`;
     } else {
-      phaseInfo.innerHTML = `Status fazy: ${PHASE_LABELS[phase] || phase}<br><strong>Następny krok:</strong> ${nextStepText}`;
+      phaseInfo.innerHTML = 'Szczegóły znajdziesz wyżej w panelu „Status tury”.';
     }
   }
 
@@ -2058,35 +2179,22 @@ function updateActionButtons(gs) {
   setDisabledReason(btnMortgage, managementDisabledReason);
 
   if (!curIsAI) {
-    if (!myTurn) {
-      nextStepText = 'Poczekaj na ruch aktywnego gracza.';
-    } else if (phase === 'rolling') {
+    if (myTurn && phase === 'rolling') {
       if (cur.inJail) {
         if (cur.getOutOfJailCards > 0) {
           primaryNextButtonId = 'btn-jail-card';
-          nextStepText = 'Użyj karty wyjścia z kryzysu lub opłać karę.';
         } else {
           primaryNextButtonId = 'btn-pay-jail';
-          nextStepText = 'Opłać karę albo rzuć kostkami.';
         }
       } else {
         primaryNextButtonId = 'btn-roll';
-        nextStepText = 'Rzuć kostkami.';
       }
-    } else if (phase === 'end-turn') {
+    } else if (myTurn && phase === 'end-turn') {
       if (gs.doubles > 0) {
         primaryNextButtonId = 'btn-roll';
-        nextStepText = 'Masz dublet — rzuć kostkami ponownie.';
       } else {
         primaryNextButtonId = 'btn-end-turn';
-        nextStepText = 'Zakończ turę.';
       }
-    } else if (phase === 'buying') {
-      nextStepText = 'Wybierz: kup lub pomiń aktywo (okno decyzji).';
-    } else if (phase === 'card-select') {
-      nextStepText = gs.pendingCardDeck === 'insight'
-        ? 'Kliknij stos „Superwizja” na planszy.'
-        : 'Kliknij stos „Sesja” na planszy.';
     }
 
     actionButtonIds.forEach((id) => {
@@ -2097,7 +2205,7 @@ function updateActionButtons(gs) {
     });
 
     if (phaseInfo) {
-      phaseInfo.innerHTML = `${PHASE_LABELS[phase] || phase}<br><strong>Następny krok:</strong> ${nextStepText}`;
+      phaseInfo.innerHTML = 'Szczegóły znajdziesz wyżej w panelu „Status tury”.';
     }
   }
 }
@@ -2167,10 +2275,10 @@ function handleJailRoll(gs, player, d1, d2, isDoubles) {
   } else {
     player.jailTurns++;
     if (player.jailTurns >= MAX_JAIL_TURNS) {
-      player.money    -= JAIL_FINE;
+      player.money    -= activeBalanceProfile.jailFine;
       player.inJail    = false;
       player.jailTurns = 0;
-      addLog(gs, `${player.name} zapłacił karę ${JAIL_FINE} zł i wyszedł z Izolacji.`);
+      addLog(gs, `${player.name} zapłacił karę ${activeBalanceProfile.jailFine} zł i wyszedł z Izolacji.`);
       checkBankruptcy(gs, player, null);
       doMove(gs, player, d1 + d2);
     } else {
@@ -2189,14 +2297,14 @@ function doMove(gs, player, steps) {
   startMoveAnimation(gs, player, oldPos, steps, () => {
     const newPos = (oldPos + steps) % 40;
     if (oldPos + steps >= 40) {
-      applyPlayerDelta(gs, player, { money: GO_MONEY, prestige: 2, energy: 1 }, 'START');
-      addLog(gs, `${player.name} przeszedł przez START — bonus miesięczny (+${GO_MONEY} zł, +2 prestiżu, +1 energii).`);
-      showToast(`${player.name} przeszedł przez START! +${GO_MONEY} zł / +2⭐ / +1🔋`);
+      applyPlayerDelta(gs, player, { money: activeBalanceProfile.goMoney, prestige: 2, energy: 1 }, 'START');
+      addLog(gs, `${player.name} przeszedł przez START — bonus miesięczny (+${activeBalanceProfile.goMoney} zł, +2 prestiżu, +1 energii).`);
+      showToast(`${player.name} przeszedł przez START! +${activeBalanceProfile.goMoney} zł / +2⭐ / +1🔋`);
     }
     player.position = newPos;
     isAnimating = false;
     animatingPlayerData = null;
-    const spaceName = BOARD_SPACES[newPos] ? BOARD_SPACES[newPos].name : `pole ${newPos}`;
+    const spaceName = ACTIVE_BOARD_SPACES[newPos] ? ACTIVE_BOARD_SPACES[newPos].name : `pole ${newPos}`;
     addLog(gs, `${player.name} wylądował na: ${spaceName}.`);
     handleLanding(gs, player);
     updateUI(gs);
@@ -2224,7 +2332,7 @@ function startMoveAnimation(gs, player, oldPos, steps, onComplete) {
 }
 
 function handleLanding(gs, player) {
-  const space = BOARD_SPACES[player.position];
+  const space = ACTIVE_BOARD_SPACES[player.position];
   if (!space) { gs.phase = 'end-turn'; return; }
 
   switch (space.type) {
@@ -2253,7 +2361,6 @@ function handleLanding(gs, player) {
       gs.phase = 'card-select';
       gs.pendingCardDeck = space.deck;
       addLog(gs, `${player.name} musi dobrać kartę ${space.deck === 'insight' ? 'Superwizji' : 'Sesji'}. Kliknij stos kart!`);
-      showToast(`Kliknij stos kart ${space.deck === 'insight' ? '🟧 Superwizja' : '🟦 Sesja'}!`);
       break;
     case 'jail':
       addLog(gs, `${player.name} ma przystanek: ${space.name}.`);
@@ -2309,13 +2416,13 @@ function handlePropertyLanding(gs, player, space) {
 
 function calculateRent(gs, space, propState) {
   if (space.type === 'railroad') {
-    const owned = BOARD_SPACES.filter(s =>
+    const owned = ACTIVE_BOARD_SPACES.filter(s =>
       s.type === 'railroad' && gs.properties[s.id] && gs.properties[s.id].owner === propState.owner
     ).length;
     return 25 * Math.pow(2, owned - 1); // 25, 50, 100, 200
   }
   if (space.type === 'utility') {
-    const owned = BOARD_SPACES.filter(s =>
+    const owned = ACTIVE_BOARD_SPACES.filter(s =>
       s.type === 'utility' && gs.properties[s.id] && gs.properties[s.id].owner === propState.owner
     ).length;
     const diceTotal = gs.dice[0] + gs.dice[1];
@@ -2326,7 +2433,7 @@ function calculateRent(gs, space, propState) {
   if (propState.houses > 0)   return space.rent[Math.min(propState.houses, 4)];
 
   // Check color monopoly
-  const groupProps = BOARD_SPACES.filter(s => s.type === 'property' && s.group === space.group);
+  const groupProps = ACTIVE_BOARD_SPACES.filter(s => s.type === 'property' && s.group === space.group);
   const ownsAll    = groupProps.every(s => gs.properties[s.id] && gs.properties[s.id].owner === propState.owner);
   return ownsAll ? space.rent[0] * 2 : space.rent[0];
 }
@@ -2465,14 +2572,14 @@ function applyCardEffect(gs, player, card) {
       break;
     case 'advance-to-go':
       player.position = 0;
-      player.money   += GO_MONEY;
-      addLog(gs, `${player.name} idzie na START i otrzymuje ${GO_MONEY} zł.`);
+      player.money   += activeBalanceProfile.goMoney;
+      addLog(gs, `${player.name} idzie na START i otrzymuje ${activeBalanceProfile.goMoney} zł.`);
       gs.phase = 'end-turn';
       return;
     case 'advance-to': {
       if (card.target < player.position) {
-        player.money += GO_MONEY;
-        addLog(gs, `${player.name} przeszedł przez START: +${GO_MONEY} zł.`);
+        player.money += activeBalanceProfile.goMoney;
+        addLog(gs, `${player.name} przeszedł przez START: +${activeBalanceProfile.goMoney} zł.`);
       }
       player.position = card.target;
       handleLanding(gs, player);
@@ -2481,8 +2588,8 @@ function applyCardEffect(gs, player, card) {
     case 'move-forward': {
       const newPos = (player.position + card.steps) % 40;
       if (newPos < player.position) {
-        player.money += GO_MONEY;
-        addLog(gs, `${player.name} przeszedł przez START: +${GO_MONEY} zł.`);
+        player.money += activeBalanceProfile.goMoney;
+        addLog(gs, `${player.name} przeszedł przez START: +${activeBalanceProfile.goMoney} zł.`);
       }
       player.position = newPos;
       handleLanding(gs, player);
@@ -2536,7 +2643,7 @@ function applyCardEffect(gs, player, card) {
 function doBuy(gs) {
   if (!gs.pendingBuy) return;
   const { spaceId } = gs.pendingBuy;
-  const space  = BOARD_SPACES[spaceId];
+  const space  = ACTIVE_BOARD_SPACES[spaceId];
   const player = gs.players[gs.currentPlayerIndex];
 
   if (!space || !player || player.money < space.price) return;
@@ -2564,10 +2671,10 @@ function doPassBuy(gs) {
 function doPayJail(gs) {
   const player = gs.players[gs.currentPlayerIndex];
   if (!player.inJail) return;
-  player.money    -= JAIL_FINE;
+  player.money    -= activeBalanceProfile.jailFine;
   player.inJail    = false;
   player.jailTurns = 0;
-  addLog(gs, `${player.name} zapłacił ${JAIL_FINE} zł i wyszedł z Izolacji.`);
+  addLog(gs, `${player.name} zapłacił ${activeBalanceProfile.jailFine} zł i wyszedł z Izolacji.`);
   playSfx('jail');
   checkBankruptcy(gs, player, null);
   gs.phase = 'rolling';
@@ -2672,7 +2779,7 @@ function aiStep(gs) {
       if (player.inJail) {
         if (player.getOutOfJailCards > 0) {
           doUseJailCard(gs);
-        } else if (player.money >= JAIL_FINE &&
+        } else if (player.money >= activeBalanceProfile.jailFine &&
                    (Math.random() < 0.5 || player.jailTurns >= MAX_JAIL_TURNS - 1)) {
           doPayJail(gs);
         } else {
@@ -2685,7 +2792,7 @@ function aiStep(gs) {
     }
     case 'buying': {
       if (gs.pendingBuy) {
-        const space = BOARD_SPACES[gs.pendingBuy.spaceId];
+        const space = ACTIVE_BOARD_SPACES[gs.pendingBuy.spaceId];
         // Buy when the player can afford it and keeps a cash buffer of 300 zł.
         if (space && player.money >= space.price + AI_CASH_BUFFER) {
           doBuy(gs);
@@ -2739,7 +2846,7 @@ function checkBankruptcy(gs, player, creditorId) {
   // before declaring the player bankrupt.
   // ============================================================
   player.properties.forEach(spaceId => {
-    const sp = BOARD_SPACES[spaceId];
+    const sp = ACTIVE_BOARD_SPACES[spaceId];
     const ps = gs.properties[spaceId];
     if (!sp || !ps) return;
     while ((ps.houses > 0 || ps.hotel) && player.money < 0) {
@@ -2802,11 +2909,11 @@ function openBuildModal(gs) {
 
   // Find buildable/sellable properties
   player.properties.forEach(spaceId => {
-    const sp = BOARD_SPACES[spaceId];
+    const sp = ACTIVE_BOARD_SPACES[spaceId];
     const ps = gs.properties[spaceId];
     if (!sp || !ps || sp.type !== 'property' || ps.mortgaged) return;
 
-    const groupProps = BOARD_SPACES.filter(s => s.type === 'property' && s.group === sp.group);
+    const groupProps = ACTIVE_BOARD_SPACES.filter(s => s.type === 'property' && s.group === sp.group);
     const ownsAll    = groupProps.every(s => gs.properties[s.id] && gs.properties[s.id].owner === player.id);
     if (!ownsAll) return;
 
@@ -2852,13 +2959,13 @@ function openBuildModal(gs) {
 }
 
 function doBuildHouse(gs, player, spaceId) {
-  const sp = BOARD_SPACES[spaceId];
+  const sp = ACTIVE_BOARD_SPACES[spaceId];
   const ps = gs.properties[spaceId];
   if (!sp || !ps || ps.mortgaged || ps.hotel) return;
   const buildCost = ps.houses >= 4 ? sp.hotelCost : sp.houseCost;
   if (player.money < buildCost) { showToast('Za mało pieniędzy!'); return; }
 
-  const groupProps = BOARD_SPACES.filter(s => s.type === 'property' && s.group === sp.group);
+  const groupProps = ACTIVE_BOARD_SPACES.filter(s => s.type === 'property' && s.group === sp.group);
   const ownsAll    = groupProps.every(s => gs.properties[s.id] && gs.properties[s.id].owner === player.id);
   if (!ownsAll) return;
 
@@ -2887,7 +2994,7 @@ function doBuildHouse(gs, player, spaceId) {
 }
 
 function doSellHouse(gs, player, spaceId) {
-  const sp = BOARD_SPACES[spaceId];
+  const sp = ACTIVE_BOARD_SPACES[spaceId];
   const ps = gs.properties[spaceId];
   if (!sp || !ps) return;
 
@@ -2917,7 +3024,7 @@ function openMortgageModal(gs) {
   list.innerHTML = '';
 
   player.properties.forEach(spaceId => {
-    const sp = BOARD_SPACES[spaceId];
+    const sp = ACTIVE_BOARD_SPACES[spaceId];
     const ps = gs.properties[spaceId];
     if (!sp || !ps) return;
 
@@ -2958,7 +3065,7 @@ function openMortgageModal(gs) {
 }
 
 function doMortgage(gs, player, spaceId) {
-  const sp = BOARD_SPACES[spaceId];
+  const sp = ACTIVE_BOARD_SPACES[spaceId];
   const ps = gs.properties[spaceId];
   if (!sp || !ps || ps.mortgaged || ps.hotel || ps.houses) return;
   player.money += sp.mortgage;
@@ -2969,7 +3076,7 @@ function doMortgage(gs, player, spaceId) {
 }
 
 function doUnmortgage(gs, player, spaceId) {
-  const sp = BOARD_SPACES[spaceId];
+  const sp = ACTIVE_BOARD_SPACES[spaceId];
   const ps = gs.properties[spaceId];
   if (!sp || !ps || !ps.mortgaged) return;
   const cost = Math.floor(sp.mortgage * 1.1);
@@ -3025,7 +3132,7 @@ function openBuyModal(gs, spaceId) {
   // Don't re-open if already open
   if (document.getElementById('modal-buy').classList.contains('open')) return;
 
-  const space  = BOARD_SPACES[spaceId];
+  const space  = ACTIVE_BOARD_SPACES[spaceId];
   const player = gs.players[gs.currentPlayerIndex];
   if (!space || !player) return;
 
