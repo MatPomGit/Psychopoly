@@ -311,8 +311,24 @@ function createDefaultMetaProgress() {
 function loadMetaProgress() {
   try {
     const raw = localStorage.getItem(META_PROGRESS_KEY);
-    if (!raw) return createDefaultMetaProgress();
-    return { ...createDefaultMetaProgress(), ...JSON.parse(raw) };
+    const defaults = createDefaultMetaProgress();
+    if (!raw) return defaults;
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return defaults;
+
+    return {
+      ...defaults,
+      ...parsed,
+      unlocked: {
+        ...defaults.unlocked,
+        ...(parsed.unlocked && typeof parsed.unlocked === 'object' ? parsed.unlocked : {}),
+      },
+      stats: {
+        ...defaults.stats,
+        ...(parsed.stats && typeof parsed.stats === 'object' ? parsed.stats : {}),
+      },
+    };
   } catch (_e) {
     return createDefaultMetaProgress();
   }
