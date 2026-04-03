@@ -888,6 +888,10 @@ function initSocket() {
   });
 
   socket.on('disconnect', (reason) => {
+    if (reason === 'io client disconnect') {
+      setConnectionStatus('rozłączono', `rozłączono (${reason})`);
+      return;
+    }
     setConnectionStatus('reconnecting', `rozłączono (${reason || 'brak powodu'})`);
     showToast('Rozłączono z serwerem. Trwa ponowne łączenie…');
   });
