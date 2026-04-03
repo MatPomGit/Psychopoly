@@ -1126,8 +1126,8 @@ html, body {
   border-left: 3px solid transparent;
 }
 .log-entry:nth-child(odd) { background: rgba(255,255,255,.04); }
-.log-entry.log-turn { border-left-color: var(--teal); font-weight: 600; }
 .log-entry.log-type-turn { border-left-color: rgba(26,188,156,.8); }
+.log-entry.log-turn { border-left-color: var(--teal); font-weight: 600; }
 .log-entry.log-type-money { border-left-color: rgba(241,196,15,.95); background: rgba(241,196,15,.08); }
 .log-entry.log-type-card { border-left-color: rgba(93,173,226,.95); background: rgba(93,173,226,.08); }
 .log-entry.log-type-penalty { border-left-color: rgba(243,156,18,.92); background: rgba(243,156,18,.1); }
