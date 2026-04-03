@@ -1785,7 +1785,6 @@ function updateActionButtons(gs) {
 
   const phase = gs.phase;
   const guidance = getTurnGuidance(gs, { cur, myTurn, curIsAI });
-  let nextStepText = guidance.recommendedMove;
   let primaryNextButtonId = null;
 
   const actionButtonIds = [
