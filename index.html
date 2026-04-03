@@ -42,7 +42,7 @@
     <div id="player-names-list"></div>
     <p class="setup-help">Każdy gracz wybiera własne imię, pionek i kolor.</p>
 
-    <div id="local-error" class="error-msg"></div>
+    <div id="local-error" class="error-msg" role="alert" aria-live="assertive"></div>
 
     <div class="setup-actions">
       <button id="btn-local-back" class="btn btn-outline">← Wstecz</button>
@@ -98,10 +98,10 @@
     <!-- Step 3: waiting room -->
     <div id="lobby-step-waiting" style="display:none">
       <div id="lobby-room-code"></div>
-      <div id="lobby-status">Oczekiwanie na graczy…</div>
+      <div id="lobby-status" role="status" aria-live="polite">Oczekiwanie na graczy…</div>
       <div id="lobby-players-list"></div>
       <p class="setup-help">Host uruchomi grę, gdy wszyscy gracze będą gotowi.</p>
-      <div id="online-error" class="error-msg"></div>
+      <div id="online-error" class="error-msg" role="alert" aria-live="assertive"></div>
       <div class="setup-actions">
         <button id="btn-lobby-leave" class="btn btn-danger btn-sm">Opuść pokój</button>
         <button id="btn-lobby-start" class="btn btn-success" style="display:none">▶ Rozpocznij grę</button>
@@ -124,10 +124,10 @@
     <!-- Board area -->
     <div id="board-area">
       <div id="board-toolbar">
-        <button id="btn-zoom-in" class="btn btn-sm btn-secondary">＋</button>
-        <button id="btn-zoom-out" class="btn btn-sm btn-secondary">－</button>
-        <button id="btn-rotate-left" class="btn btn-sm btn-secondary">⟲</button>
-        <button id="btn-rotate-right" class="btn btn-sm btn-secondary">⟳</button>
+        <button id="btn-zoom-in" class="btn btn-sm btn-secondary" aria-label="Powiększ planszę" title="Powiększ planszę">＋</button>
+        <button id="btn-zoom-out" class="btn btn-sm btn-secondary" aria-label="Pomniejsz planszę" title="Pomniejsz planszę">－</button>
+        <button id="btn-rotate-left" class="btn btn-sm btn-secondary" aria-label="Obróć planszę w lewo" title="Obróć planszę w lewo">⟲</button>
+        <button id="btn-rotate-right" class="btn btn-sm btn-secondary" aria-label="Obróć planszę w prawo" title="Obróć planszę w prawo">⟳</button>
         <button id="btn-reset-view" class="btn btn-sm btn-warning">Reset</button>
         <button id="btn-exit-to-menu" class="btn btn-sm btn-danger">🚪 Menu</button>
       </div>
@@ -143,15 +143,15 @@
 
     <!-- Side panel -->
     <div id="side-panel">
-      <div id="panel-tabs">
-        <button class="tab-btn active" data-tab="actions">Akcje</button>
-        <button class="tab-btn" data-tab="players">Gracze</button>
-        <button class="tab-btn" data-tab="props">Własności</button>
-        <button class="tab-btn" data-tab="log">Dziennik</button>
+      <div id="panel-tabs" role="tablist" aria-label="Panel gry">
+        <button class="tab-btn active" data-tab="actions" id="tab-actions" role="tab" aria-selected="true" aria-controls="actions-content" tabindex="0">Akcje</button>
+        <button class="tab-btn" data-tab="players" id="tab-players" role="tab" aria-selected="false" aria-controls="players-content" tabindex="-1">Gracze</button>
+        <button class="tab-btn" data-tab="props" id="tab-props" role="tab" aria-selected="false" aria-controls="props-content" tabindex="-1">Własności</button>
+        <button class="tab-btn" data-tab="log" id="tab-log" role="tab" aria-selected="false" aria-controls="log-content" tabindex="-1">Dziennik</button>
       </div>
 
       <!-- Actions tab -->
-      <div id="actions-content" class="panel-content active">
+      <div id="actions-content" class="panel-content active" role="tabpanel" aria-labelledby="tab-actions" tabindex="0">
         <div id="current-player-banner" style="background:rgba(26,188,156,.1);border-radius:6px;padding:8px 10px;font-size:.82rem;font-weight:700;color:#1abc9c;text-align:center;"></div>
         <div id="audio-controls">
           <button id="btn-toggle-sfx" class="btn btn-sm btn-outline audio-toggle-btn">🔊 Dźwięki: ON</button>
@@ -181,21 +181,21 @@
           <button id="btn-end-turn" class="btn btn-secondary btn-full" disabled>✔ Zakończ turę</button>
         </div>
 
-        <div id="phase-info" style="font-size:.75rem;opacity:.55;text-align:center;margin-top:4px;"></div>
+        <div id="phase-info" role="status" aria-live="polite" aria-atomic="true" style="font-size:.75rem;opacity:.75;text-align:center;margin-top:4px;"></div>
       </div>
 
       <!-- Players tab -->
-      <div id="players-content" class="panel-content">
+      <div id="players-content" class="panel-content" role="tabpanel" aria-labelledby="tab-players" tabindex="0">
         <div id="players-list-panel"></div>
       </div>
 
       <!-- Properties tab -->
-      <div id="props-content" class="panel-content">
+      <div id="props-content" class="panel-content" role="tabpanel" aria-labelledby="tab-props" tabindex="0">
         <div id="properties-panel"></div>
       </div>
 
       <!-- Log tab -->
-      <div id="log-content" class="panel-content">
+      <div id="log-content" class="panel-content" role="tabpanel" aria-labelledby="tab-log" tabindex="0">
         <div id="log-list"></div>
       </div>
     </div>
@@ -206,16 +206,16 @@
   <div id="chat-drawer">
     <div id="chat-drawer-panel">
       <div class="chat-drawer-title">💬 Czat</div>
-      <div id="chat-drawer-messages"></div>
+      <div id="chat-drawer-messages" role="log" aria-live="polite" aria-relevant="additions text"></div>
       <div id="chat-drawer-offline-note" class="chat-drawer-offline-note" style="display:none">
         Czat jest dostępny w trybie online.
       </div>
       <div id="chat-drawer-input-row">
         <input type="text" id="chat-drawer-input" placeholder="Napisz wiadomość…" maxlength="200">
-        <button id="chat-drawer-send" class="btn btn-primary btn-sm">➤</button>
+        <button id="chat-drawer-send" class="btn btn-primary btn-sm" aria-label="Wyślij wiadomość" title="Wyślij wiadomość">➤</button>
       </div>
     </div>
-    <button id="chat-drawer-toggle" title="Czat">💬</button>
+    <button id="chat-drawer-toggle" title="Czat" aria-label="Pokaż lub ukryj czat" aria-controls="chat-drawer-panel" aria-expanded="false">💬</button>
   </div>
 
   <!-- Player stats tooltip (for turn queue hover) -->
@@ -237,7 +237,7 @@
 <!-- ============================================================
      MODAL: Card drawn
      ============================================================ -->
-<div id="modal-card" class="modal-overlay">
+<div id="modal-card" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-card-deck" aria-describedby="modal-card-text" aria-hidden="true">
   <div class="modal-box">
     <div id="modal-card-deck" class="card-modal-deck"></div>
     <div id="modal-card-icon" class="card-icon"></div>
@@ -251,7 +251,7 @@
 <!-- ============================================================
      MODAL: Buy property
      ============================================================ -->
-<div id="modal-buy" class="modal-overlay">
+<div id="modal-buy" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-buy-name" aria-describedby="modal-buy-price" aria-hidden="true">
   <div class="modal-box" style="padding-top:38px">
     <div id="modal-buy-colorbar" class="buy-color-bar"></div>
     <div class="modal-title" id="modal-buy-name"></div>
@@ -273,9 +273,9 @@
 <!-- ============================================================
      MODAL: Build / Sell houses
      ============================================================ -->
-<div id="modal-build" class="modal-overlay">
+<div id="modal-build" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-build-title" aria-describedby="build-grid-container" aria-hidden="true">
   <div class="modal-box">
-    <div class="modal-title">📜 Rozwijaj / Redukuj</div>
+    <div id="modal-build-title" class="modal-title">📜 Rozwijaj / Redukuj</div>
     <div class="modal-body" style="margin-bottom:10px">
       <div id="build-grid-container" class="build-grid"></div>
     </div>
@@ -288,9 +288,9 @@
 <!-- ============================================================
      MODAL: Mortgage / Unmortgage
      ============================================================ -->
-<div id="modal-mortgage" class="modal-overlay">
+<div id="modal-mortgage" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-mortgage-title" aria-describedby="mortgage-list" aria-hidden="true">
   <div class="modal-box">
-    <div class="modal-title">📋 Zastaw / Odkup</div>
+    <div id="modal-mortgage-title" class="modal-title">📋 Zastaw / Odkup</div>
     <div class="modal-body" style="margin-bottom:10px">
       <div id="mortgage-list" class="mortgage-list"></div>
     </div>
@@ -303,9 +303,9 @@
 <!-- ============================================================
      MODAL: Settings
      ============================================================ -->
-<div id="modal-settings" class="modal-overlay">
+<div id="modal-settings" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-settings-title" aria-describedby="setting-render-quality" aria-hidden="true">
   <div class="modal-box">
-    <div class="modal-title">⚙️ Ustawienia gry</div>
+    <div id="modal-settings-title" class="modal-title">⚙️ Ustawienia gry</div>
     <div class="modal-body settings-modal-body" style="margin-bottom:12px">
       <div class="form-group settings-row">
         <div class="settings-label-row">
@@ -359,9 +359,34 @@
 </div>
 
 <!-- ============================================================
+     MODAL: Onboarding tutorial
+     ============================================================ -->
+<div id="modal-onboarding" class="modal-overlay">
+  <div class="modal-box onboarding-box">
+    <div class="onboarding-header-row">
+      <div class="modal-title" id="onboarding-title">Witaj w Psychopolonii</div>
+      <div id="onboarding-step-indicator" class="onboarding-step-indicator">Krok 1/5</div>
+    </div>
+    <div class="modal-body onboarding-body">
+      <p id="onboarding-text"></p>
+      <label class="onboarding-never-row">
+        <input type="checkbox" id="onboarding-never-show">
+        <span>Nie pokazuj ponownie</span>
+      </label>
+    </div>
+    <div class="modal-actions onboarding-actions">
+      <button id="btn-onboarding-skip" class="btn btn-outline">Pomiń</button>
+      <button id="btn-onboarding-prev" class="btn btn-secondary">← Wstecz</button>
+      <button id="btn-onboarding-next" class="btn btn-primary">Dalej →</button>
+      <button id="btn-onboarding-finish" class="btn btn-success" style="display:none">Zaczynajmy!</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
      TOAST
      ============================================================ -->
-<div id="toast-container"></div>
+<div id="toast-container" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <!-- Scripts -->
 <script src="/socket.io/socket.io.js"></script>
