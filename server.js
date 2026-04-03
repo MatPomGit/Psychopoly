@@ -151,13 +151,16 @@ io.on('connection', (socket) => {
     console.log(`[join-room] ${profile.name} joined ${roomId} as player ${playerId}`);
   });
 
-  socket.on('set-ready', ({ ready }) => {
+  socket.on('set-ready', (payload = {}) => {
+    const data = payload && typeof payload === 'object' ? payload : {};
+    if (typeof data.ready !== 'boolean') return;
+
     const roomId = socket.data.roomId;
     const room = rooms.get(roomId);
     if (!room || room.started) return;
     const player = room.players.find(p => p.socketId === socket.id);
     if (!player) return;
-    player.ready = Boolean(ready);
+    player.ready = data.ready;
     emitRoomState(room);
   });
 
