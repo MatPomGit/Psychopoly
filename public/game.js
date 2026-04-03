@@ -1569,7 +1569,7 @@ function getTurnGuidance(gs, { cur, myTurn, curIsAI }) {
   } else if (phase === 'rolling') {
     if (cur.inJail) {
       recommendedMove = cur.getOutOfJailCards > 0
-        ? 'Użyj karty wolności lub opłać karę.'
+        ? 'Użyj karty wyjścia z kryzysu lub opłać karę.'
         : 'Opłać karę albo rzuć kostkami.';
     } else {
       recommendedMove = 'Rzuć kostkami.';
