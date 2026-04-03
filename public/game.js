@@ -233,6 +233,28 @@ function syncSettingsForm() {
   if (font) font.value = String(gameSettings.fontScale || 1);
   if (quality) quality.value = gameSettings.renderQuality || 'high';
   if (fx) fx.value = String(gameSettings.boardFxIntensity || 1);
+  refreshSettingsLiveLabels();
+}
+
+function getRangeValueText(inputId, value) {
+  const numeric = parseFloat(value);
+  if (!Number.isFinite(numeric)) return value;
+  if (inputId === 'setting-font-scale') return `${numeric.toFixed(2)}×`;
+  return `${numeric.toFixed(1)}×`;
+}
+
+function refreshSettingsLiveLabels() {
+  const pairs = [
+    ['setting-animation-speed', 'setting-animation-speed-value'],
+    ['setting-font-scale', 'setting-font-scale-value'],
+    ['setting-fx-intensity', 'setting-fx-intensity-value']
+  ];
+  pairs.forEach(([inputId, outputId]) => {
+    const inputEl = document.getElementById(inputId);
+    const outputEl = document.getElementById(outputId);
+    if (!inputEl || !outputEl) return;
+    outputEl.textContent = getRangeValueText(inputId, inputEl.value);
+  });
 }
 
 function openSettingsModal() {
@@ -1077,6 +1099,14 @@ function setupGameHandlers() {
   const btnSettingsClose = document.getElementById('btn-settings-close');
   if (btnSettingsClose) btnSettingsClose.addEventListener('click', () => closeModal('modal-settings'));
 
+  ['setting-animation-speed', 'setting-font-scale', 'setting-fx-intensity'].forEach(id => {
+    const slider = document.getElementById(id);
+    if (!slider) return;
+    slider.addEventListener('input', () => {
+      refreshSettingsLiveLabels();
+    });
+  });
+
   const btnExitToMenu = document.getElementById('btn-exit-to-menu');
   if (btnExitToMenu) {
     btnExitToMenu.addEventListener('click', () => {
@@ -1718,6 +1748,31 @@ function updateActionButtons(gs) {
   const myTurn = !curIsAI && (gameMode === 'local' || gs.currentPlayerIndex === myPlayerId);
 
   const phase = gs.phase;
+  let nextStepText = PHASE_LABELS[phase] || phase;
+  let primaryNextButtonId = null;
+
+  const actionButtonIds = [
+    'btn-roll',
+    'btn-pay-jail',
+    'btn-jail-card',
+    'btn-end-turn',
+    'btn-build',
+    'btn-mortgage',
+  ];
+
+  function setDisabledReason(button, reason) {
+    if (!button) return;
+    button.dataset.disabledReason = reason || '';
+    button.title = button.disabled ? (reason || 'Niedostępne teraz') : '';
+  }
+
+  function clearGuidedState() {
+    actionButtonIds.forEach((id) => {
+      const button = document.getElementById(id);
+      if (!button) return;
+      button.classList.remove('is-primary-next', 'is-secondary-option');
+    });
+  }
 
   // Current player banner
   const banner = document.getElementById('current-player-banner');
@@ -1736,14 +1791,21 @@ function updateActionButtons(gs) {
     if (curIsAI) {
       phaseInfo.innerHTML = `<span class="ai-thinking-indicator">Status fazy: 🤖 AI myśli…</span>`;
     } else {
-      phaseInfo.textContent = `Status fazy: ${PHASE_LABELS[phase] || phase}`;
+      phaseInfo.innerHTML = `Status fazy: ${PHASE_LABELS[phase] || phase}<br><strong>Następny krok:</strong> ${nextStepText}`;
     }
   }
+
+  clearGuidedState();
 
   // Roll
   const btnRoll = document.getElementById('btn-roll');
   btnRoll.style.display  = (phase === 'rolling' || (phase === 'end-turn' && gs.doubles > 0)) ? 'flex' : 'none';
   btnRoll.disabled       = !myTurn || isAnimating;
+  if (btnRoll.style.display !== 'none') {
+    if (!myTurn) setDisabledReason(btnRoll, 'To nie jest Twoja tura.');
+    else if (isAnimating) setDisabledReason(btnRoll, 'Poczekaj na zakończenie animacji ruchu.');
+    else setDisabledReason(btnRoll, '');
+  }
 
   // Jail buttons
   const btnPayJail  = document.getElementById('btn-pay-jail');
@@ -1755,11 +1817,17 @@ function updateActionButtons(gs) {
     btnPayJail.style.display  = 'none';
     btnJailCard.style.display = 'none';
   }
+  setDisabledReason(btnPayJail, !myTurn ? 'To nie jest Twoja tura.' : 'Dostępne tylko podczas kryzysu.');
+  setDisabledReason(btnJailCard, cur.getOutOfJailCards > 0 ? '' : 'Brak karty wyjścia z kryzysu.');
 
   // End turn
   const btnEnd = document.getElementById('btn-end-turn');
   btnEnd.style.display = 'flex';
   btnEnd.disabled = (phase !== 'end-turn') || !myTurn || isAnimating;
+  if (phase !== 'end-turn') setDisabledReason(btnEnd, 'Najpierw wykonaj obowiązkowe działania tej fazy.');
+  else if (!myTurn) setDisabledReason(btnEnd, 'To nie jest Twoja tura.');
+  else if (isAnimating) setDisabledReason(btnEnd, 'Poczekaj na zakończenie animacji ruchu.');
+  else setDisabledReason(btnEnd, '');
 
   // Build / Mortgage (available during rolling or end-turn on your turn)
   const canManage = myTurn && (phase === 'rolling' || phase === 'end-turn');
@@ -1769,6 +1837,60 @@ function updateActionButtons(gs) {
   const btnMortgage = document.getElementById('btn-mortgage');
   btnBuild.style.display    = canManage && hasProps ? 'flex' : 'none';
   btnMortgage.style.display = canManage && hasProps ? 'flex' : 'none';
+
+  const managementDisabledReason = !myTurn
+    ? 'To nie jest Twoja tura.'
+    : !hasProps
+      ? 'Nie masz jeszcze aktywów do zarządzania.'
+      : (phase === 'rolling' || phase === 'end-turn')
+        ? ''
+        : 'Zarządzanie aktywami dostępne tylko na początku lub końcu tury.';
+  setDisabledReason(btnBuild, managementDisabledReason);
+  setDisabledReason(btnMortgage, managementDisabledReason);
+
+  if (!curIsAI) {
+    if (!myTurn) {
+      nextStepText = 'Poczekaj na ruch aktywnego gracza.';
+    } else if (phase === 'rolling') {
+      if (cur.inJail) {
+        if (cur.getOutOfJailCards > 0) {
+          primaryNextButtonId = 'btn-jail-card';
+          nextStepText = 'Użyj karty wyjścia z kryzysu lub opłać karę.';
+        } else {
+          primaryNextButtonId = 'btn-pay-jail';
+          nextStepText = 'Opłać karę albo rzuć kostkami.';
+        }
+      } else {
+        primaryNextButtonId = 'btn-roll';
+        nextStepText = 'Rzuć kostkami.';
+      }
+    } else if (phase === 'end-turn') {
+      if (gs.doubles > 0) {
+        primaryNextButtonId = 'btn-roll';
+        nextStepText = 'Masz dublet — rzuć kostkami ponownie.';
+      } else {
+        primaryNextButtonId = 'btn-end-turn';
+        nextStepText = 'Zakończ turę.';
+      }
+    } else if (phase === 'buying') {
+      nextStepText = 'Wybierz: kup lub pomiń aktywo (okno decyzji).';
+    } else if (phase === 'card-select') {
+      nextStepText = gs.pendingCardDeck === 'insight'
+        ? 'Kliknij stos „Superwizja” na planszy.'
+        : 'Kliknij stos „Sesja” na planszy.';
+    }
+
+    actionButtonIds.forEach((id) => {
+      const button = document.getElementById(id);
+      if (!button || button.style.display === 'none') return;
+      if (id === primaryNextButtonId && !button.disabled) button.classList.add('is-primary-next');
+      else button.classList.add('is-secondary-option');
+    });
+
+    if (phaseInfo) {
+      phaseInfo.innerHTML = `${PHASE_LABELS[phase] || phase}<br><strong>Następny krok:</strong> ${nextStepText}`;
+    }
+  }
 }
 
 // ============================================================
