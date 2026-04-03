@@ -42,6 +42,16 @@ const PHASE_LABELS = {
   jailed:         'Jesteś w stanie kryzysu',
   end:            'Koniec gry',
 };
+const PHASE_CHECKLIST_STEP = {
+  rolling: 0,
+  jailed: 0,
+  moving: 1,
+  buying: 2,
+  card: 2,
+  'card-select': 2,
+  'end-turn': 3,
+  end: 3,
+};
 
 // ============================================================
 // MODULE-LEVEL STATE
@@ -1547,6 +1557,64 @@ function updateSidePanel(gs) {
   renderLogPanel(gs);
 }
 
+function getTurnGuidance(gs, { cur, myTurn, curIsAI }) {
+  const phase = gs.phase;
+  const phaseLabel = PHASE_LABELS[phase] || phase;
+  let recommendedMove = phaseLabel;
+
+  if (curIsAI) {
+    recommendedMove = 'Poczekaj, aż AI zakończy ruch.';
+  } else if (!myTurn) {
+    recommendedMove = 'Poczekaj na ruch aktywnego gracza.';
+  } else if (phase === 'rolling') {
+    if (cur.inJail) {
+      recommendedMove = cur.getOutOfJailCards > 0
+        ? 'Użyj karty wolności lub opłać karę.'
+        : 'Opłać karę albo rzuć kostkami.';
+    } else {
+      recommendedMove = 'Rzuć kostkami.';
+    }
+  } else if (phase === 'end-turn') {
+    recommendedMove = gs.doubles > 0
+      ? 'Masz dublet — rzuć kostkami ponownie.'
+      : 'Zakończ turę.';
+  } else if (phase === 'buying') {
+    recommendedMove = 'Wybierz: kup lub pomiń aktywo.';
+  } else if (phase === 'card-select') {
+    recommendedMove = gs.pendingCardDeck === 'insight'
+      ? 'Kliknij stos „Superwizja” na planszy.'
+      : 'Kliknij stos „Sesja” na planszy.';
+  } else if (phase === 'moving') {
+    recommendedMove = 'Poczekaj na zakończenie ruchu pionka.';
+  }
+
+  return {
+    phaseLabel,
+    recommendedMove,
+    checklistStep: PHASE_CHECKLIST_STEP[phase] ?? 0
+  };
+}
+
+function updateTurnStatusPanel(gs, { cur, myTurn, curIsAI, guidance }) {
+  const playerEl = document.getElementById('turn-status-player');
+  const phaseEl = document.getElementById('turn-status-phase');
+  const recEl = document.getElementById('turn-status-recommendation');
+  if (playerEl) {
+    if (gameMode === 'online' && !myTurn) playerEl.textContent = `${cur.name} (przeciwnik)`;
+    else if (curIsAI) playerEl.textContent = `${cur.name} 🤖`;
+    else playerEl.textContent = cur.name;
+    playerEl.style.color = cur.color;
+  }
+  if (phaseEl) phaseEl.textContent = guidance.phaseLabel;
+  if (recEl) recEl.textContent = guidance.recommendedMove;
+
+  document.querySelectorAll('#turn-checklist [data-step]').forEach((stepEl) => {
+    const step = Number(stepEl.dataset.step);
+    stepEl.classList.toggle('is-current', step === guidance.checklistStep);
+    stepEl.classList.toggle('is-done', step < guidance.checklistStep);
+  });
+}
+
 // ============================================================
 // TURN QUEUE BAR
 // ============================================================
@@ -1716,7 +1784,8 @@ function updateActionButtons(gs) {
   const myTurn = !curIsAI && (gameMode === 'local' || gs.currentPlayerIndex === myPlayerId);
 
   const phase = gs.phase;
-  let nextStepText = PHASE_LABELS[phase] || phase;
+  const guidance = getTurnGuidance(gs, { cur, myTurn, curIsAI });
+  let nextStepText = guidance.recommendedMove;
   let primaryNextButtonId = null;
 
   const actionButtonIds = [
@@ -1753,13 +1822,14 @@ function updateActionButtons(gs) {
       banner.style.color = myTurn ? cur.color : 'rgba(255,255,255,.45)';
     }
   }
+  updateTurnStatusPanel(gs, { cur, myTurn, curIsAI, guidance });
 
   const phaseInfo = document.getElementById('phase-info');
   if (phaseInfo) {
     if (curIsAI) {
       phaseInfo.innerHTML = `<span class="ai-thinking-indicator">🤖 AI myśli…</span>`;
     } else {
-      phaseInfo.innerHTML = `${PHASE_LABELS[phase] || phase}<br><strong>Następny krok:</strong> ${nextStepText}`;
+      phaseInfo.innerHTML = 'Szczegóły znajdziesz wyżej w panelu „Status tury”.';
     }
   }
 
@@ -1817,35 +1887,22 @@ function updateActionButtons(gs) {
   setDisabledReason(btnMortgage, managementDisabledReason);
 
   if (!curIsAI) {
-    if (!myTurn) {
-      nextStepText = 'Poczekaj na ruch aktywnego gracza.';
-    } else if (phase === 'rolling') {
+    if (myTurn && phase === 'rolling') {
       if (cur.inJail) {
         if (cur.getOutOfJailCards > 0) {
           primaryNextButtonId = 'btn-jail-card';
-          nextStepText = 'Użyj karty wyjścia z kryzysu lub opłać karę.';
         } else {
           primaryNextButtonId = 'btn-pay-jail';
-          nextStepText = 'Opłać karę albo rzuć kostkami.';
         }
       } else {
         primaryNextButtonId = 'btn-roll';
-        nextStepText = 'Rzuć kostkami.';
       }
-    } else if (phase === 'end-turn') {
+    } else if (myTurn && phase === 'end-turn') {
       if (gs.doubles > 0) {
         primaryNextButtonId = 'btn-roll';
-        nextStepText = 'Masz dublet — rzuć kostkami ponownie.';
       } else {
         primaryNextButtonId = 'btn-end-turn';
-        nextStepText = 'Zakończ turę.';
       }
-    } else if (phase === 'buying') {
-      nextStepText = 'Wybierz: kup lub pomiń aktywo (okno decyzji).';
-    } else if (phase === 'card-select') {
-      nextStepText = gs.pendingCardDeck === 'insight'
-        ? 'Kliknij stos „Superwizja” na planszy.'
-        : 'Kliknij stos „Sesja” na planszy.';
     }
 
     actionButtonIds.forEach((id) => {
@@ -1856,7 +1913,7 @@ function updateActionButtons(gs) {
     });
 
     if (phaseInfo) {
-      phaseInfo.innerHTML = `${PHASE_LABELS[phase] || phase}<br><strong>Następny krok:</strong> ${nextStepText}`;
+      phaseInfo.innerHTML = 'Szczegóły znajdziesz wyżej w panelu „Status tury”.';
     }
   }
 }
@@ -2012,7 +2069,6 @@ function handleLanding(gs, player) {
       gs.phase = 'card-select';
       gs.pendingCardDeck = space.deck;
       addLog(gs, `${player.name} musi dobrać kartę ${space.deck === 'insight' ? 'Superwizji' : 'Sesji'}. Kliknij stos kart!`);
-      showToast(`Kliknij stos kart ${space.deck === 'insight' ? '🟧 Superwizja' : '🟦 Sesja'}!`);
       break;
     case 'jail':
       addLog(gs, `${player.name} ma przystanek: ${space.name}.`);

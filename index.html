@@ -153,6 +153,18 @@
       <!-- Actions tab -->
       <div id="actions-content" class="panel-content active">
         <div id="current-player-banner" style="background:rgba(26,188,156,.1);border-radius:6px;padding:8px 10px;font-size:.82rem;font-weight:700;color:#1abc9c;text-align:center;"></div>
+        <div id="turn-status-panel" class="turn-status-panel">
+          <div class="action-section-title">Status tury</div>
+          <div class="turn-status-row"><span>Aktywny gracz</span><strong id="turn-status-player">—</strong></div>
+          <div class="turn-status-row"><span>Faza</span><strong id="turn-status-phase">—</strong></div>
+          <div class="turn-status-row"><span>Rekomendowany ruch</span><strong id="turn-status-recommendation">—</strong></div>
+          <div id="turn-checklist" class="turn-checklist">
+            <span data-step="0">1. 🎲 Rzut</span>
+            <span data-step="1">2. 👣 Ruch</span>
+            <span data-step="2">3. 🧩 Decyzja</span>
+            <span data-step="3">4. ✅ Koniec</span>
+          </div>
+        </div>
         <div id="audio-controls">
           <button id="btn-toggle-sfx" class="btn btn-sm btn-outline audio-toggle-btn">🔊 Dźwięki: ON</button>
           <button id="btn-toggle-music" class="btn btn-sm btn-outline audio-toggle-btn">🎵 Muzyka: ON</button>
