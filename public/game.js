@@ -949,9 +949,13 @@ function setupGameHandlers() {
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const tab = btn.dataset.tab;
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(b => {
+        b.classList.remove('active');
+        b.setAttribute('aria-selected', 'false');
+      });
       document.querySelectorAll('.panel-content').forEach(c => c.classList.remove('active'));
       btn.classList.add('active');
+      btn.setAttribute('aria-selected', 'true');
       document.getElementById(tab + '-content').classList.add('active');
     });
   });
@@ -1054,7 +1058,10 @@ function setupGameHandlers() {
   if (drawerToggle) {
     drawerToggle.addEventListener('click', () => {
       const drawer = document.getElementById('chat-drawer');
-      if (drawer) drawer.classList.toggle('open');
+      if (drawer) {
+        drawer.classList.toggle('open');
+        drawerToggle.setAttribute('aria-expanded', drawer.classList.contains('open') ? 'true' : 'false');
+      }
     });
   }
 
@@ -2744,10 +2751,16 @@ function doUnmortgage(gs, player, spaceId) {
 // MODALS
 // ============================================================
 function openModal(id) {
-  document.getElementById(id).classList.add('open');
+  const modal = document.getElementById(id);
+  if (!modal) return;
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
 }
 function closeModal(id) {
-  document.getElementById(id).classList.remove('open');
+  const modal = document.getElementById(id);
+  if (!modal) return;
+  modal.classList.remove('open');
+  modal.setAttribute('aria-hidden', 'true');
 }
 
 function openCardModal(card, deck) {
