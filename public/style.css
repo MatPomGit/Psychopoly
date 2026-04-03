@@ -63,21 +63,22 @@ html, body {
 .menu-logo {
   text-align: center;
   margin-bottom: 48px;
+  max-width: 90vw;
 }
 .menu-logo h1 {
-  font-size: 3.4rem;
-  letter-spacing: .12em;
+  font-size: clamp(1.5rem, 8vw, 3.4rem);
+  letter-spacing: clamp(.04em, 1.5vw, .12em);
   font-weight: 900;
   text-transform: uppercase;
   color: var(--teal-light);
   text-shadow: 0 3px 20px rgba(26,188,156,.6);
 }
 .menu-logo p {
-  font-size: 1.1rem;
+  font-size: clamp(.85rem, 3vw, 1.1rem);
   opacity: .75;
   margin-top: 6px;
 }
-.menu-buttons { display: flex; flex-direction: column; gap: 16px; width: 280px; }
+.menu-buttons { display: flex; flex-direction: column; gap: 16px; width: min(280px, 90vw); }
 
 /* ============================================================
    BUTTONS (shared)
@@ -1253,9 +1254,27 @@ body.quality-high #board {
 }
 @media (max-width: 700px) {
   #game-main { flex-direction: column; }
-  #side-panel { width: 100%; height: 200px; flex-direction: row; }
+  #side-panel { width: 100%; height: clamp(180px, 35vh, 260px); flex-direction: row; }
   #panel-tabs { flex-direction: column; width: 60px; }
   :root { --corner-size: 48px; --cell-w: 32px; }
+  /* Move space preview below toolbar so they don't overlap */
+  .space-preview-box { top: 46px; }
+  /* Anchor chat drawer below turn-queue bar instead of viewport midpoint */
+  #chat-drawer { top: 52px; transform: translateX(-272px); }
+  #chat-drawer.open { transform: translateX(0); }
+}
+
+/* ---- phones ≤ 420 px: board overflows at 48/32 values, scale down ---- */
+@media (max-width: 420px) {
+  :root { --corner-size: 40px; --cell-w: 27px; }
+  .space-preview-box { width: 140px; font-size: .70rem; }
+  #board-toolbar .btn { padding: 4px 7px; }
+}
+
+/* ---- very small phones ≤ 340 px ---- */
+@media (max-width: 340px) {
+  :root { --corner-size: 34px; --cell-w: 22px; }
+  .space-preview-box { display: none; }
 }
 
 /* ============================================================
