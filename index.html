@@ -350,6 +350,31 @@
 </div>
 
 <!-- ============================================================
+     MODAL: Onboarding tutorial
+     ============================================================ -->
+<div id="modal-onboarding" class="modal-overlay">
+  <div class="modal-box onboarding-box">
+    <div class="onboarding-header-row">
+      <div class="modal-title" id="onboarding-title">Witaj w Psychopolonii</div>
+      <div id="onboarding-step-indicator" class="onboarding-step-indicator">Krok 1/5</div>
+    </div>
+    <div class="modal-body onboarding-body">
+      <p id="onboarding-text"></p>
+      <label class="onboarding-never-row">
+        <input type="checkbox" id="onboarding-never-show">
+        <span>Nie pokazuj ponownie</span>
+      </label>
+    </div>
+    <div class="modal-actions onboarding-actions">
+      <button id="btn-onboarding-skip" class="btn btn-outline">Pomiń</button>
+      <button id="btn-onboarding-prev" class="btn btn-secondary">← Wstecz</button>
+      <button id="btn-onboarding-next" class="btn btn-primary">Dalej →</button>
+      <button id="btn-onboarding-finish" class="btn btn-success" style="display:none">Zaczynajmy!</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
      TOAST
      ============================================================ -->
 <div id="toast-container"></div>

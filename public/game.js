@@ -29,6 +29,7 @@ const STARTING_ETHICS = 50;
 const CRITICAL_BURNOUT = 100;
 const MAX_ROUNDS = 12;
 const AI_CASH_BUFFER = 300;
+const ONBOARDING_SEEN_KEY = 'psychopoly-onboarding-seen';
 
 const DICE_FACES = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
 
@@ -108,6 +109,40 @@ let movedPlayersLastUpdate = [];
 let isAnimating = false;
 let animatingPlayerData = null; // { playerId, animPos }
 let gameSettings = { ...(window.PSYCHOPOLY_DEFAULT_CONFIG || {}) };
+let onboardingStepIndex = 0;
+let onboardingActive = false;
+let onboardingShownThisSession = false;
+let onboardingHighlightedEl = null;
+
+const ONBOARDING_STEPS = [
+  {
+    title: 'Cel gry',
+    text: 'Budujesz praktykę psychologiczną przez 12 rund. Wygrywa osoba z najwyższym wynikiem całkowitym, nie tylko z największą gotówką.',
+    selector: '#phase-info',
+  },
+  {
+    title: 'Rzut i ruch',
+    text: 'Zacznij turę od rzutu kostkami. Kliknij ten przycisk, aby ruszyć pionkiem i uruchomić efekt pola.',
+    selector: '#btn-roll',
+  },
+  {
+    title: 'Zakup i rozwój',
+    text: 'Po wejściu na wolne aktywo możesz je kupić lub pominąć. Rozsądne zakupy zwiększają długofalowe przychody i stabilność.',
+    selector: '#phase-info',
+  },
+  {
+    title: 'Koniec tury i gracze',
+    text: 'Po wykonaniu akcji zakończ turę. W zakładce Gracze śledzisz zasoby wszystkich uczestników.',
+    selector: '#players-list-panel',
+    activateTab: 'players',
+  },
+  {
+    title: 'Jak wygrać',
+    text: 'Najlepsza strategia to balans zasobów: gotówki, prestiżu, energii i etyki przy kontrolowaniu wypalenia. Sama gotówka nie wystarczy.',
+    selector: '#phase-info',
+    activateTab: 'actions',
+  },
+];
 
 // Stat colors (matching CSS .stat-* classes)
 const STAT_COLORS = {
@@ -322,9 +357,122 @@ function setupBoardViewportControls() {
 // SCREEN MANAGEMENT
 // ============================================================
 function showScreen(id) {
+  if (id !== 'screen-game' && onboardingActive) stopOnboarding();
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   syncMusicPlayback(id);
+}
+
+function getOnboardingSeen() {
+  try {
+    return localStorage.getItem(ONBOARDING_SEEN_KEY) === '1';
+  } catch (_e) {
+    return false;
+  }
+}
+
+function setOnboardingSeen(seen = true) {
+  try {
+    if (seen) localStorage.setItem(ONBOARDING_SEEN_KEY, '1');
+    else localStorage.removeItem(ONBOARDING_SEEN_KEY);
+  } catch (_e) {}
+}
+
+function setupOnboardingHandlers() {
+  const btnSkip = document.getElementById('btn-onboarding-skip');
+  const btnPrev = document.getElementById('btn-onboarding-prev');
+  const btnNext = document.getElementById('btn-onboarding-next');
+  const btnFinish = document.getElementById('btn-onboarding-finish');
+
+  if (btnSkip) {
+    btnSkip.addEventListener('click', () => {
+      const neverShow = document.getElementById('onboarding-never-show')?.checked;
+      if (neverShow) setOnboardingSeen(true);
+      stopOnboarding();
+    });
+  }
+  if (btnPrev) {
+    btnPrev.addEventListener('click', () => {
+      onboardingStepIndex = Math.max(0, onboardingStepIndex - 1);
+      renderOnboardingStep();
+    });
+  }
+  if (btnNext) {
+    btnNext.addEventListener('click', () => {
+      onboardingStepIndex = Math.min(ONBOARDING_STEPS.length - 1, onboardingStepIndex + 1);
+      renderOnboardingStep();
+    });
+  }
+  if (btnFinish) {
+    btnFinish.addEventListener('click', () => {
+      setOnboardingSeen(true);
+      stopOnboarding();
+      showToast('Powodzenia! Pilnuj balansu zasobów, a nie tylko gotówki.');
+    });
+  }
+}
+
+function maybeStartOnboarding() {
+  if (onboardingShownThisSession || onboardingActive || getOnboardingSeen()) return;
+  onboardingShownThisSession = true;
+  onboardingActive = true;
+  onboardingStepIndex = 0;
+  const neverInput = document.getElementById('onboarding-never-show');
+  if (neverInput) neverInput.checked = false;
+  openModal('modal-onboarding');
+  renderOnboardingStep();
+}
+
+function stopOnboarding() {
+  onboardingActive = false;
+  clearOnboardingHighlight();
+  closeModal('modal-onboarding');
+}
+
+function clearOnboardingHighlight() {
+  if (onboardingHighlightedEl) onboardingHighlightedEl.classList.remove('onboarding-highlight');
+  onboardingHighlightedEl = null;
+}
+
+function activateOnboardingTab(tabName) {
+  if (!tabName) return;
+  const tabBtn = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
+  if (!tabBtn) return;
+  tabBtn.click();
+}
+
+function renderOnboardingStep() {
+  if (!onboardingActive) return;
+  const step = ONBOARDING_STEPS[onboardingStepIndex];
+  if (!step) return;
+
+  activateOnboardingTab(step.activateTab);
+  clearOnboardingHighlight();
+
+  const titleEl = document.getElementById('onboarding-title');
+  const textEl = document.getElementById('onboarding-text');
+  const indicatorEl = document.getElementById('onboarding-step-indicator');
+  const btnPrev = document.getElementById('btn-onboarding-prev');
+  const btnNext = document.getElementById('btn-onboarding-next');
+  const btnFinish = document.getElementById('btn-onboarding-finish');
+
+  if (titleEl) titleEl.textContent = step.title;
+  if (textEl) textEl.textContent = step.text;
+  if (indicatorEl) indicatorEl.textContent = `Krok ${onboardingStepIndex + 1}/${ONBOARDING_STEPS.length}`;
+  if (btnPrev) btnPrev.disabled = onboardingStepIndex === 0;
+
+  const isLast = onboardingStepIndex === ONBOARDING_STEPS.length - 1;
+  if (btnNext) btnNext.style.display = isLast ? 'none' : 'inline-flex';
+  if (btnFinish) btnFinish.style.display = isLast ? 'inline-flex' : 'none';
+
+  if (step.selector) {
+    const targetEl = document.querySelector(step.selector);
+    if (targetEl) {
+      onboardingHighlightedEl = targetEl;
+      onboardingHighlightedEl.classList.add('onboarding-highlight');
+      onboardingHighlightedEl.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    }
+  }
 }
 
 // ============================================================
@@ -338,6 +486,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupLocalSetupHandlers();
   setupOnlineLobbyHandlers();
   setupGameHandlers();
+  setupOnboardingHandlers();
   bindGlobalButtonSfx();
   setupBoardViewportControls();
   showScreen('screen-menu');
@@ -918,6 +1067,7 @@ function startLocalGame(playerConfigs) {
   showScreen('screen-game');
   addLog(localGame, `--- Tura gracza ${localGame.players[0].name} ---`, true);
   updateUI(localGame);
+  window.setTimeout(maybeStartOnboarding, 180);
 }
 
 // ============================================================
@@ -934,6 +1084,7 @@ function startOnlineGame(gs) {
   if (drawerSend)  drawerSend.disabled  = false;
   showScreen('screen-game');
   applyOnlineState(gs);
+  window.setTimeout(maybeStartOnboarding, 180);
 }
 
 function applyOnlineState(gs) {
