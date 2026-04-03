@@ -124,10 +124,10 @@
     <!-- Board area -->
     <div id="board-area">
       <div id="board-toolbar">
-        <button id="btn-zoom-in" class="btn btn-sm btn-secondary">＋</button>
-        <button id="btn-zoom-out" class="btn btn-sm btn-secondary">－</button>
-        <button id="btn-rotate-left" class="btn btn-sm btn-secondary">⟲</button>
-        <button id="btn-rotate-right" class="btn btn-sm btn-secondary">⟳</button>
+        <button id="btn-zoom-in" class="btn btn-sm btn-secondary" aria-label="Powiększ planszę">＋</button>
+        <button id="btn-zoom-out" class="btn btn-sm btn-secondary" aria-label="Pomniejsz planszę">－</button>
+        <button id="btn-rotate-left" class="btn btn-sm btn-secondary" aria-label="Obróć planszę w lewo">⟲</button>
+        <button id="btn-rotate-right" class="btn btn-sm btn-secondary" aria-label="Obróć planszę w prawo">⟳</button>
         <button id="btn-reset-view" class="btn btn-sm btn-warning">Reset</button>
         <button id="btn-exit-to-menu" class="btn btn-sm btn-danger">🚪 Menu</button>
       </div>
@@ -143,15 +143,15 @@
 
     <!-- Side panel -->
     <div id="side-panel">
-      <div id="panel-tabs">
-        <button class="tab-btn active" data-tab="actions">Akcje</button>
-        <button class="tab-btn" data-tab="players">Gracze</button>
-        <button class="tab-btn" data-tab="props">Własności</button>
-        <button class="tab-btn" data-tab="log">Dziennik</button>
+      <div id="panel-tabs" role="tablist" aria-label="Panele boczne">
+        <button class="tab-btn active" data-tab="actions" id="tab-actions" role="tab" aria-selected="true" aria-controls="actions-content" tabindex="0">Akcje</button>
+        <button class="tab-btn" data-tab="players" id="tab-players" role="tab" aria-selected="false" aria-controls="players-content" tabindex="-1">Gracze</button>
+        <button class="tab-btn" data-tab="props" id="tab-props" role="tab" aria-selected="false" aria-controls="props-content" tabindex="-1">Własności</button>
+        <button class="tab-btn" data-tab="log" id="tab-log" role="tab" aria-selected="false" aria-controls="log-content" tabindex="-1">Dziennik</button>
       </div>
 
       <!-- Actions tab -->
-      <div id="actions-content" class="panel-content active">
+      <div id="actions-content" class="panel-content active" role="tabpanel" aria-labelledby="tab-actions" tabindex="0">
         <div id="current-player-banner" style="background:rgba(26,188,156,.1);border-radius:6px;padding:8px 10px;font-size:.82rem;font-weight:700;color:#1abc9c;text-align:center;"></div>
         <div id="audio-controls">
           <button id="btn-toggle-sfx" class="btn btn-sm btn-outline audio-toggle-btn">🔊 Dźwięki: ON</button>
@@ -181,21 +181,21 @@
           <button id="btn-end-turn" class="btn btn-secondary btn-full" disabled>✔ Zakończ turę</button>
         </div>
 
-        <div id="phase-info" style="font-size:.75rem;opacity:.55;text-align:center;margin-top:4px;"></div>
+        <div id="phase-info" role="status" aria-live="polite" aria-atomic="true" style="font-size:.75rem;opacity:.75;text-align:center;margin-top:4px;"></div>
       </div>
 
       <!-- Players tab -->
-      <div id="players-content" class="panel-content">
+      <div id="players-content" class="panel-content" role="tabpanel" aria-labelledby="tab-players" tabindex="0">
         <div id="players-list-panel"></div>
       </div>
 
       <!-- Properties tab -->
-      <div id="props-content" class="panel-content">
+      <div id="props-content" class="panel-content" role="tabpanel" aria-labelledby="tab-props" tabindex="0">
         <div id="properties-panel"></div>
       </div>
 
       <!-- Log tab -->
-      <div id="log-content" class="panel-content">
+      <div id="log-content" class="panel-content" role="tabpanel" aria-labelledby="tab-log" tabindex="0">
         <div id="log-list"></div>
       </div>
     </div>
@@ -212,10 +212,10 @@
       </div>
       <div id="chat-drawer-input-row">
         <input type="text" id="chat-drawer-input" placeholder="Napisz wiadomość…" maxlength="200">
-        <button id="chat-drawer-send" class="btn btn-primary btn-sm">➤</button>
+        <button id="chat-drawer-send" class="btn btn-primary btn-sm" aria-label="Wyślij wiadomość">➤</button>
       </div>
     </div>
-    <button id="chat-drawer-toggle" title="Czat">💬</button>
+    <button id="chat-drawer-toggle" title="Czat" aria-label="Otwórz lub zamknij czat" aria-expanded="false" aria-controls="chat-drawer-panel">💬</button>
   </div>
 
   <!-- Player stats tooltip (for turn queue hover) -->
@@ -237,7 +237,7 @@
 <!-- ============================================================
      MODAL: Card drawn
      ============================================================ -->
-<div id="modal-card" class="modal-overlay">
+<div id="modal-card" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-card-text">
   <div class="modal-box">
     <div id="modal-card-deck" class="card-modal-deck"></div>
     <div id="modal-card-icon" class="card-icon"></div>
@@ -251,7 +251,7 @@
 <!-- ============================================================
      MODAL: Buy property
      ============================================================ -->
-<div id="modal-buy" class="modal-overlay">
+<div id="modal-buy" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-buy-name">
   <div class="modal-box" style="padding-top:38px">
     <div id="modal-buy-colorbar" class="buy-color-bar"></div>
     <div class="modal-title" id="modal-buy-name"></div>
@@ -273,9 +273,9 @@
 <!-- ============================================================
      MODAL: Build / Sell houses
      ============================================================ -->
-<div id="modal-build" class="modal-overlay">
+<div id="modal-build" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-build-title">
   <div class="modal-box">
-    <div class="modal-title">📜 Rozwijaj / Redukuj</div>
+    <div class="modal-title" id="modal-build-title">📜 Rozwijaj / Redukuj</div>
     <div class="modal-body" style="margin-bottom:10px">
       <div id="build-grid-container" class="build-grid"></div>
     </div>
@@ -288,9 +288,9 @@
 <!-- ============================================================
      MODAL: Mortgage / Unmortgage
      ============================================================ -->
-<div id="modal-mortgage" class="modal-overlay">
+<div id="modal-mortgage" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-mortgage-title">
   <div class="modal-box">
-    <div class="modal-title">📋 Zastaw / Odkup</div>
+    <div class="modal-title" id="modal-mortgage-title">📋 Zastaw / Odkup</div>
     <div class="modal-body" style="margin-bottom:10px">
       <div id="mortgage-list" class="mortgage-list"></div>
     </div>
@@ -303,9 +303,9 @@
 <!-- ============================================================
      MODAL: Settings
      ============================================================ -->
-<div id="modal-settings" class="modal-overlay">
+<div id="modal-settings" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-settings-title">
   <div class="modal-box">
-    <div class="modal-title">⚙️ Ustawienia gry</div>
+    <div class="modal-title" id="modal-settings-title">⚙️ Ustawienia gry</div>
     <div class="modal-body" style="margin-bottom:12px">
       <div class="form-group">
         <label>Szybkość animacji</label>
@@ -339,7 +339,7 @@
 <!-- ============================================================
      TOAST
      ============================================================ -->
-<div id="toast-container"></div>
+<div id="toast-container" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <!-- Scripts -->
 <script src="/socket.io/socket.io.js"></script>
