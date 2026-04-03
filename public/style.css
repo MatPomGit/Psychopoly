@@ -18,6 +18,7 @@
   --danger:    #e74c3c;
   --warning:   #f39c12;
   --success:   #27ae60;
+  --focus-ring:#7dd3fc;
   --shadow:    0 2px 12px rgba(0,0,0,.25);
   --radius:    8px;
   --ui-font-scale: 1;
@@ -111,6 +112,24 @@ html, body {
 .btn-lg       { padding: 15px 30px; font-size: 1.05rem; }
 .btn-full     { width: 100%; }
 .btn:disabled { opacity: .45; cursor: not-allowed; filter: none; transform: none; }
+
+/* Unified keyboard focus ring */
+:is(
+  .btn,
+  .tab-btn,
+  .token-choice,
+  .color-choice,
+  #chat-drawer-toggle,
+  #board-toolbar button,
+  #board-toolbar [role="button"],
+  #board-toolbar [tabindex],
+  .modal-actions .btn,
+  .modal-box button
+):focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px rgba(10,21,39,.9);
+}
 
 /* ============================================================
    SETUP SCREENS (local + online)
