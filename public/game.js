@@ -2931,6 +2931,7 @@ function openModal(id) {
   if (!modal) return;
   modalFocusReturnMap.set(id, document.activeElement instanceof HTMLElement ? document.activeElement : null);
   modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
   const firstFocusable = modal.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
   if (firstFocusable instanceof HTMLElement) {
     firstFocusable.focus();
@@ -2940,6 +2941,7 @@ function closeModal(id) {
   const modal = document.getElementById(id);
   if (!modal) return;
   modal.classList.remove('open');
+  modal.setAttribute('aria-hidden', 'true');
   const previousFocus = modalFocusReturnMap.get(id);
   if (previousFocus instanceof HTMLElement) previousFocus.focus();
   modalFocusReturnMap.delete(id);
