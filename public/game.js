@@ -29,6 +29,7 @@ const STARTING_ETHICS = 50;
 const CRITICAL_BURNOUT = 100;
 const MAX_ROUNDS = 12;
 const AI_CASH_BUFFER = 300;
+const ONBOARDING_SEEN_KEY = 'psychopoly-onboarding-seen';
 
 const DICE_FACES = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
 
@@ -109,6 +110,41 @@ let isAnimating = false;
 let animatingPlayerData = null; // { playerId, animPos }
 let gameSettings = { ...(window.PSYCHOPOLY_DEFAULT_CONFIG || {}) };
 let logFilterMode = 'all';
+let onboardingStepIndex = 0;
+let onboardingActive = false;
+let onboardingShownThisSession = false;
+let onboardingHighlightedEl = null;
+
+const ONBOARDING_STEPS = [
+  {
+    title: 'Cel gry',
+    text: 'Budujesz praktykę psychologiczną przez 12 rund. Wygrywa osoba z najwyższym wynikiem całkowitym, nie tylko z największą gotówką.',
+    selector: '#phase-info',
+  },
+  {
+    title: 'Rzut i ruch',
+    text: 'Zacznij turę od rzutu kostkami. Kliknij ten przycisk, aby ruszyć pionkiem i uruchomić efekt pola.',
+    selector: '#btn-roll',
+  },
+  {
+    title: 'Zakup i rozwój',
+    text: 'Po wejściu na wolne aktywo możesz je kupić lub pominąć. Rozsądne zakupy zwiększają długofalowe przychody i stabilność.',
+    selector: '#phase-info',
+  },
+  {
+    title: 'Koniec tury i gracze',
+    text: 'Po wykonaniu akcji zakończ turę. W zakładce Gracze śledzisz zasoby wszystkich uczestników.',
+    selector: '#players-list-panel',
+    activateTab: 'players',
+  },
+  {
+    title: 'Jak wygrać',
+    text: 'Najlepsza strategia to balans zasobów: gotówki, prestiżu, energii i etyki przy kontrolowaniu wypalenia. Sama gotówka nie wystarczy.',
+    selector: '#phase-info',
+    activateTab: 'actions',
+  },
+];
+const modalFocusReturnMap = new Map();
 
 // Stat colors (matching CSS .stat-* classes)
 const STAT_COLORS = {
@@ -349,9 +385,122 @@ function setupBoardViewportControls() {
 // SCREEN MANAGEMENT
 // ============================================================
 function showScreen(id) {
+  if (id !== 'screen-game' && onboardingActive) stopOnboarding();
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   syncMusicPlayback(id);
+}
+
+function getOnboardingSeen() {
+  try {
+    return localStorage.getItem(ONBOARDING_SEEN_KEY) === '1';
+  } catch (_e) {
+    return false;
+  }
+}
+
+function setOnboardingSeen(seen = true) {
+  try {
+    if (seen) localStorage.setItem(ONBOARDING_SEEN_KEY, '1');
+    else localStorage.removeItem(ONBOARDING_SEEN_KEY);
+  } catch (_e) {}
+}
+
+function setupOnboardingHandlers() {
+  const btnSkip = document.getElementById('btn-onboarding-skip');
+  const btnPrev = document.getElementById('btn-onboarding-prev');
+  const btnNext = document.getElementById('btn-onboarding-next');
+  const btnFinish = document.getElementById('btn-onboarding-finish');
+
+  if (btnSkip) {
+    btnSkip.addEventListener('click', () => {
+      const neverShow = document.getElementById('onboarding-never-show')?.checked;
+      if (neverShow) setOnboardingSeen(true);
+      stopOnboarding();
+    });
+  }
+  if (btnPrev) {
+    btnPrev.addEventListener('click', () => {
+      onboardingStepIndex = Math.max(0, onboardingStepIndex - 1);
+      renderOnboardingStep();
+    });
+  }
+  if (btnNext) {
+    btnNext.addEventListener('click', () => {
+      onboardingStepIndex = Math.min(ONBOARDING_STEPS.length - 1, onboardingStepIndex + 1);
+      renderOnboardingStep();
+    });
+  }
+  if (btnFinish) {
+    btnFinish.addEventListener('click', () => {
+      setOnboardingSeen(true);
+      stopOnboarding();
+      showToast('Powodzenia! Pilnuj balansu zasobów, a nie tylko gotówki.');
+    });
+  }
+}
+
+function maybeStartOnboarding() {
+  if (onboardingShownThisSession || onboardingActive || getOnboardingSeen()) return;
+  onboardingShownThisSession = true;
+  onboardingActive = true;
+  onboardingStepIndex = 0;
+  const neverInput = document.getElementById('onboarding-never-show');
+  if (neverInput) neverInput.checked = false;
+  openModal('modal-onboarding');
+  renderOnboardingStep();
+}
+
+function stopOnboarding() {
+  onboardingActive = false;
+  clearOnboardingHighlight();
+  closeModal('modal-onboarding');
+}
+
+function clearOnboardingHighlight() {
+  if (onboardingHighlightedEl) onboardingHighlightedEl.classList.remove('onboarding-highlight');
+  onboardingHighlightedEl = null;
+}
+
+function activateOnboardingTab(tabName) {
+  if (!tabName) return;
+  const tabBtn = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
+  if (!tabBtn) return;
+  tabBtn.click();
+}
+
+function renderOnboardingStep() {
+  if (!onboardingActive) return;
+  const step = ONBOARDING_STEPS[onboardingStepIndex];
+  if (!step) return;
+
+  activateOnboardingTab(step.activateTab);
+  clearOnboardingHighlight();
+
+  const titleEl = document.getElementById('onboarding-title');
+  const textEl = document.getElementById('onboarding-text');
+  const indicatorEl = document.getElementById('onboarding-step-indicator');
+  const btnPrev = document.getElementById('btn-onboarding-prev');
+  const btnNext = document.getElementById('btn-onboarding-next');
+  const btnFinish = document.getElementById('btn-onboarding-finish');
+
+  if (titleEl) titleEl.textContent = step.title;
+  if (textEl) textEl.textContent = step.text;
+  if (indicatorEl) indicatorEl.textContent = `Krok ${onboardingStepIndex + 1}/${ONBOARDING_STEPS.length}`;
+  if (btnPrev) btnPrev.disabled = onboardingStepIndex === 0;
+
+  const isLast = onboardingStepIndex === ONBOARDING_STEPS.length - 1;
+  if (btnNext) btnNext.style.display = isLast ? 'none' : 'inline-flex';
+  if (btnFinish) btnFinish.style.display = isLast ? 'inline-flex' : 'none';
+
+  if (step.selector) {
+    const targetEl = document.querySelector(step.selector);
+    if (targetEl) {
+      onboardingHighlightedEl = targetEl;
+      onboardingHighlightedEl.classList.add('onboarding-highlight');
+      onboardingHighlightedEl.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    }
+  }
 }
 
 // ============================================================
@@ -365,6 +514,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupLocalSetupHandlers();
   setupOnlineLobbyHandlers();
   setupGameHandlers();
+  setupOnboardingHandlers();
   bindGlobalButtonSfx();
   setupBoardViewportControls();
   showScreen('screen-menu');
@@ -650,6 +800,7 @@ function renderPlayerNameInputs(count) {
       btn.type = 'button';
       btn.className = `token-choice${opt.id === row.dataset.pawn ? ' active' : ''}`;
       btn.title = opt.name;
+      btn.setAttribute('aria-label', `Wybierz pionek: ${opt.name}`);
       btn.dataset.pawn = opt.id;
       btn.innerHTML = `<img src="${opt.icon}" alt="${opt.name}">`;
       btn.addEventListener('click', () => {
@@ -667,6 +818,7 @@ function renderPlayerNameInputs(count) {
       btn.style.background = color;
       btn.dataset.color = color;
       btn.title = color;
+      btn.setAttribute('aria-label', `Wybierz kolor: ${color}`);
       btn.addEventListener('click', () => {
         row.dataset.color = color;
         colorList.querySelectorAll('.color-choice').forEach(el => el.classList.remove('active'));
@@ -755,6 +907,7 @@ function renderOnlineSelections() {
     btn.className = `token-choice${i === 0 ? ' active' : ''}`;
     btn.innerHTML = `<img src="${opt.icon}" alt="${opt.name}">`;
     btn.title = opt.name;
+    btn.setAttribute('aria-label', `Wybierz pionek: ${opt.name}`);
     btn.addEventListener('click', () => {
       myPlayerPawn = opt.id;
       tokenList.querySelectorAll('.token-choice').forEach(el => el.classList.remove('active'));
@@ -769,6 +922,7 @@ function renderOnlineSelections() {
     btn.type = 'button';
     btn.className = `color-choice${i === 0 ? ' active' : ''}`;
     btn.style.background = color;
+    btn.setAttribute('aria-label', `Wybierz kolor: ${color}`);
     btn.addEventListener('click', () => {
       myPlayerColor = color;
       colorList.querySelectorAll('.color-choice').forEach(el => el.classList.remove('active'));
@@ -945,6 +1099,7 @@ function startLocalGame(playerConfigs) {
   showScreen('screen-game');
   addLog(localGame, `--- Tura gracza ${localGame.players[0].name} ---`, true);
   updateUI(localGame);
+  window.setTimeout(maybeStartOnboarding, 180);
 }
 
 // ============================================================
@@ -961,6 +1116,7 @@ function startOnlineGame(gs) {
   if (drawerSend)  drawerSend.disabled  = false;
   showScreen('screen-game');
   applyOnlineState(gs);
+  window.setTimeout(maybeStartOnboarding, 180);
 }
 
 function applyOnlineState(gs) {
@@ -973,13 +1129,38 @@ function applyOnlineState(gs) {
 // ============================================================
 function setupGameHandlers() {
   // Tabs
-  document.querySelectorAll('.tab-btn').forEach(btn => {
+  const tabs = Array.from(document.querySelectorAll('.tab-btn'));
+  const activateTab = (btn) => {
+    if (!btn) return;
+    const tab = btn.dataset.tab;
+    tabs.forEach(b => {
+      b.classList.remove('active');
+      b.setAttribute('aria-selected', 'false');
+      b.tabIndex = -1;
+    });
+    document.querySelectorAll('.panel-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    btn.setAttribute('aria-selected', 'true');
+    btn.tabIndex = 0;
+    const panel = document.getElementById(tab + '-content');
+    if (panel) panel.classList.add('active');
+  };
+  tabs.forEach(btn => {
     btn.addEventListener('click', () => {
-      const tab = btn.dataset.tab;
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.panel-content').forEach(c => c.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById(tab + '-content').classList.add('active');
+      activateTab(btn);
+    });
+    btn.addEventListener('keydown', (e) => {
+      const currentIndex = tabs.indexOf(btn);
+      if (currentIndex === -1) return;
+      let nextIndex = null;
+      if (e.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabs.length;
+      if (e.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+      if (e.key === 'Home') nextIndex = 0;
+      if (e.key === 'End') nextIndex = tabs.length - 1;
+      if (nextIndex === null) return;
+      e.preventDefault();
+      tabs[nextIndex].focus();
+      activateTab(tabs[nextIndex]);
     });
   });
 
@@ -1102,7 +1283,9 @@ function setupGameHandlers() {
   if (drawerToggle) {
     drawerToggle.addEventListener('click', () => {
       const drawer = document.getElementById('chat-drawer');
-      if (drawer) drawer.classList.toggle('open');
+      if (!drawer) return;
+      const isOpen = drawer.classList.toggle('open');
+      drawerToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
     });
   }
 
@@ -1815,9 +1998,9 @@ function updateActionButtons(gs) {
   const phaseInfo = document.getElementById('phase-info');
   if (phaseInfo) {
     if (curIsAI) {
-      phaseInfo.innerHTML = `<span class="ai-thinking-indicator">🤖 AI myśli…</span>`;
+      phaseInfo.innerHTML = `<span class="ai-thinking-indicator">Status fazy: 🤖 AI myśli…</span>`;
     } else {
-      phaseInfo.innerHTML = `${PHASE_LABELS[phase] || phase}<br><strong>Następny krok:</strong> ${nextStepText}`;
+      phaseInfo.innerHTML = `Status fazy: ${PHASE_LABELS[phase] || phase}<br><strong>Następny krok:</strong> ${nextStepText}`;
     }
   }
 
@@ -2802,10 +2985,24 @@ function doUnmortgage(gs, player, spaceId) {
 // MODALS
 // ============================================================
 function openModal(id) {
-  document.getElementById(id).classList.add('open');
+  const modal = document.getElementById(id);
+  if (!modal) return;
+  modalFocusReturnMap.set(id, document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
+  const firstFocusable = modal.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+  if (firstFocusable instanceof HTMLElement) {
+    firstFocusable.focus();
+  }
 }
 function closeModal(id) {
-  document.getElementById(id).classList.remove('open');
+  const modal = document.getElementById(id);
+  if (!modal) return;
+  modal.classList.remove('open');
+  modal.setAttribute('aria-hidden', 'true');
+  const previousFocus = modalFocusReturnMap.get(id);
+  if (previousFocus instanceof HTMLElement) previousFocus.focus();
+  modalFocusReturnMap.delete(id);
 }
 
 function openCardModal(card, deck) {
