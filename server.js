@@ -10,6 +10,9 @@ const app = express();
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   cors: {
+    // Allow any origin by default so players on any domain can connect.
+    // Set the CORS_ORIGIN environment variable to restrict access in production
+    // (e.g. CORS_ORIGIN=https://myapp.railway.app).
     origin: process.env.CORS_ORIGIN || '*',
     methods: ['GET', 'POST'],
   },

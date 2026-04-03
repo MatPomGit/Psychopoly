@@ -43,6 +43,9 @@ na serwerze z Node.js. Poniżej przykłady darmowych platform.
 4. Railway automatycznie wykryje Node.js i uruchomi `npm start`
 5. Udostępnij wygenerowany adres URL innym graczom
 
+> **Opcjonalnie:** ustaw zmienną środowiskową `CORS_ORIGIN=https://twojadomena.railway.app`
+> aby ograniczyć połączenia WebSocket tylko do Twojej domeny.
+
 ### Render
 
 1. Załóż konto na [render.com](https://render.com)
