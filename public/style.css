@@ -1080,6 +1080,35 @@ html, body {
 .form-group input[type=range] {
   width: 100%;
 }
+.settings-modal-body {
+  display: grid;
+  gap: 14px;
+}
+.settings-row {
+  margin-bottom: 0;
+}
+.settings-label-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.settings-live-value {
+  font-size: .76rem;
+  font-weight: 700;
+  color: var(--navy-dark);
+  background: rgba(26,42,74,.08);
+  border-radius: 999px;
+  padding: 2px 8px;
+  min-width: 54px;
+  text-align: center;
+}
+.settings-help {
+  margin-top: 4px;
+  font-size: .72rem;
+  color: var(--text-muted);
+}
 
 /* Render quality modifiers */
 body.quality-low #board {
