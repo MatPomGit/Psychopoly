@@ -817,9 +817,11 @@ function resetLobbyUI() {
 function setConnectionStatus(status, message) {
   socketConnectionStatus = status;
   const el = document.getElementById('lobby-connection-status');
-  if (!el) return;
-  const base = `Status: ${status}`;
-  el.textContent = message ? `${base} — ${message}` : base;
+  if (el) {
+    const base = `Status: ${status}`;
+    el.textContent = message ? `${base} — ${message}` : base;
+  }
+  refreshLobbyControls();
 }
 
 function getStartBlockReason(players) {
