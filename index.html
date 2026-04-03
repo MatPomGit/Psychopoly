@@ -216,6 +216,15 @@
 
       <!-- Log tab -->
       <div id="log-content" class="panel-content" role="tabpanel" aria-labelledby="tab-log" tabindex="0">
+        <div class="log-toolbar">
+          <div class="log-filters" id="log-filters">
+            <button type="button" class="log-filter-btn active" data-log-filter="all">Wszystko</button>
+            <button type="button" class="log-filter-btn" data-log-filter="finance">Finanse</button>
+            <button type="button" class="log-filter-btn" data-log-filter="card">Karty</button>
+            <button type="button" class="log-filter-btn" data-log-filter="critical">Krytyczne</button>
+          </div>
+          <button id="btn-log-top" type="button" class="btn btn-sm btn-outline">↑ Góra</button>
+        </div>
         <div id="log-list"></div>
       </div>
     </div>

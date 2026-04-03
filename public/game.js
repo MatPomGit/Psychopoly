@@ -120,6 +120,7 @@ let movedPlayersLastUpdate = [];
 let isAnimating = false;
 let animatingPlayerData = null; // { playerId, animPos }
 let gameSettings = { ...(window.PSYCHOPOLY_DEFAULT_CONFIG || {}) };
+let logFilterMode = 'all';
 const BALANCE_PRESETS = window.PSYCHOPOLY_BALANCE_PRESETS || {};
 const DEFAULT_BALANCE_PRESET = (window.PSYCHOPOLY_DEFAULT_CONFIG && window.PSYCHOPOLY_DEFAULT_CONFIG.balancePreset) || "standard";
 let activeBalanceProfile = null;
@@ -251,6 +252,24 @@ function askPlayerChoice(message) {
 function formatMoney(n) { return n + ' zł'; }
 function clampStat(value, min = 0, max = 100) { return Math.max(min, Math.min(max, value)); }
 
+function classifyLogType(msg = '', isTurn = false) {
+  if (isTurn) return 'turn';
+  const t = String(msg).toLowerCase();
+  if (t.includes('💀') || t.includes('zbankrut') || t.includes('odpada') || t.includes('wygrywa') || t.includes('wygrał')) return 'bankrupt';
+  if (t.includes('karta') || t.includes('ciągnie') || t.includes('szansy') || t.includes('społeczności')) return 'card';
+  if (t.includes('izolacji') || t.includes('kara') || t.includes('płaci') || t.includes('czynsz') || t.includes('podatk')) return 'penalty';
+  if (t.includes('zł') || t.includes('kupił') || t.includes('zastawił') || t.includes('odkupił') || t.includes('sprzedał')) return 'money';
+  return 'turn';
+}
+
+function isLowValueSpamLog(msg = '', type = 'turn') {
+  if (type === 'bankrupt' || type === 'penalty' || type === 'card') return false;
+  const t = String(msg).toLowerCase();
+  if (t.includes('wylądował na swojej własności') || t.includes('zatrzymał się na wolnej woli') || t.includes('ma przystanek')) return true;
+  if (type === 'turn' && t.includes('--- tura gracza')) return false;
+  return false;
+}
+
 function getPrestigeScore(player) {
   return player.money + (player.prestige * 12) + (player.energy * 8) + (player.ethics * 8) - (player.burnout * 10);
 }
@@ -279,8 +298,16 @@ function applyPlayerDelta(gs, player, delta = {}, reason = '') {
   if (summary.length) addLog(gs, `${player.name}: ${summary.join(', ')}${reason ? ` (${reason})` : ''}.`);
 }
 
-function addLog(gs, msg, isTurn = false) {
-  gs.log.unshift({ text: msg, isTurn });
+function addLog(gs, msg, isTurn = false, type = null) {
+  const resolvedType = type || classifyLogType(msg, isTurn);
+  if (isLowValueSpamLog(msg, resolvedType)) {
+    const duplicateLowValueCount = gs.log
+      .slice(0, 14)
+      .filter(entry => entry.type === resolvedType && entry.text === msg)
+      .length;
+    if (duplicateLowValueCount >= 2) return;
+  }
+  gs.log.unshift({ text: msg, isTurn, type: resolvedType, ts: Date.now() });
   if (gs.log.length > 80) gs.log.pop();
 }
 
@@ -1339,6 +1366,27 @@ function setupGameHandlers() {
     });
   });
 
+  const logFilters = document.getElementById('log-filters');
+  if (logFilters) {
+    logFilters.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('.log-filter-btn');
+      if (!btn) return;
+      logFilterMode = btn.dataset.logFilter || 'all';
+      logFilters.querySelectorAll('.log-filter-btn').forEach((el) => {
+        el.classList.toggle('active', el === btn);
+      });
+      if (localGame) renderLogPanel(localGame);
+    });
+  }
+
+  const logTopBtn = document.getElementById('btn-log-top');
+  if (logTopBtn) {
+    logTopBtn.addEventListener('click', () => {
+      const logContent = document.getElementById('log-content');
+      if (logContent) logContent.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
+
   // Roll
   document.getElementById('btn-roll').addEventListener('click', () => {
     if (!localGame) return;
@@ -2140,13 +2188,23 @@ function renderPropertiesPanel(gs) {
 function renderLogPanel(gs) {
   const list = document.getElementById('log-list');
   if (!list) return;
+  const filterToTypes = {
+    all: null,
+    finance: ['money', 'penalty'],
+    card: ['card'],
+    critical: ['penalty', 'bankrupt'],
+  };
+  const allowedTypes = filterToTypes[logFilterMode] || null;
   list.innerHTML = '';
-  gs.log.forEach(entry => {
+  gs.log
+    .filter((entry) => !allowedTypes || allowedTypes.includes(entry.type || classifyLogType(entry.text, entry.isTurn)))
+    .forEach(entry => {
     const div = document.createElement('div');
-    div.className = `log-entry${entry.isTurn ? ' log-turn' : ''}`;
+    const type = entry.type || classifyLogType(entry.text, entry.isTurn);
+    div.className = `log-entry log-type-${type}${entry.isTurn ? ' log-turn' : ''}`;
     div.textContent = entry.text;
     list.appendChild(div);
-  });
+    });
 }
 
 // ============================================================
