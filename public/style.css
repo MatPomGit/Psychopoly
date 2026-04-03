@@ -6,6 +6,19 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
+  --ui-font-scale: 1;
+  --anim-speed-mult: 1;
+  --fx-intensity: 1;
+  --board-scale: 1;
+
+  /* board dimensions */
+  --corner-size: 78px;
+  --cell-w:      56px;
+  --cell-h:      78px;  /* side-cell height (= corner-size) */
+}
+
+body.theme-classic,
+html.theme-preload-classic body {
   --navy:      #1a2a4a;
   --navy-dark: #0f1e36;
   --teal:      #17a589;
@@ -24,15 +37,74 @@
   --focus-ring:#7dd3fc;
   --shadow:    0 2px 12px rgba(0,0,0,.25);
   --radius:    8px;
-  --ui-font-scale: 1;
-  --anim-speed-mult: 1;
-  --fx-intensity: 1;
-  --board-scale: 1;
+  --menu-grad-accent: #1d4e89;
+  --banner-bg: rgba(26,188,156,.12);
+  --banner-fg: #0f766e;
+  --on-primary: #05241f;
+  --on-secondary: #ffffff;
+  --on-success: #062a14;
+  --on-danger: #120304;
+  --on-warning: #3b2400;
+}
 
-  /* board dimensions */
-  --corner-size: 78px;
-  --cell-w:      56px;
-  --cell-h:      78px;  /* side-cell height (= corner-size) */
+body.theme-dark,
+html.theme-preload-dark body {
+  --navy:      #14213d;
+  --navy-dark: #0b1324;
+  --teal:      #10b981;
+  --teal-light:#34d399;
+  --bg:        #0f172a;
+  --bg2:       #1e293b;
+  --white:     #e2e8f0;
+  --text:      #e5e7eb;
+  --text-muted:#94a3b8;
+  --text-secondary-dark-bg: rgba(255,255,255,.9);
+  --text-tertiary-dark-bg: rgba(255,255,255,.8);
+  --text-disabled-dark-bg: rgba(255,255,255,.65);
+  --danger:    #ef4444;
+  --warning:   #f59e0b;
+  --success:   #22c55e;
+  --focus-ring:#93c5fd;
+  --shadow:    0 2px 16px rgba(0,0,0,.45);
+  --radius:    8px;
+  --menu-grad-accent: #1f4b99;
+  --banner-bg: rgba(16,185,129,.16);
+  --banner-fg: #6ee7b7;
+  --on-primary: #05241f;
+  --on-secondary: #f8fafc;
+  --on-success: #05210f;
+  --on-danger: #2b0a0a;
+  --on-warning: #231703;
+}
+
+body.theme-calm,
+html.theme-preload-calm body {
+  --navy:      #244b5a;
+  --navy-dark: #163845;
+  --teal:      #2e7d73;
+  --teal-light:#4db6ac;
+  --bg:        #eef4f6;
+  --bg2:       #d8e6ea;
+  --white:     #ffffff;
+  --text:      #17323d;
+  --text-muted:#55707a;
+  --text-secondary-dark-bg: rgba(255,255,255,.88);
+  --text-tertiary-dark-bg: rgba(255,255,255,.76);
+  --text-disabled-dark-bg: rgba(255,255,255,.64);
+  --danger:    #d1495b;
+  --warning:   #c48a27;
+  --success:   #2f9e5a;
+  --focus-ring:#67b7dc;
+  --shadow:    0 2px 12px rgba(8,47,73,.25);
+  --radius:    8px;
+  --menu-grad-accent: #3a7496;
+  --banner-bg: rgba(77,182,172,.15);
+  --banner-fg: #145f58;
+  --on-primary: #ffffff;
+  --on-secondary: #ffffff;
+  --on-success: #ffffff;
+  --on-danger: #120304;
+  --on-warning: #1f1400;
 }
 
 html, body {
@@ -62,7 +134,7 @@ html, body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, var(--navy-dark) 0%, var(--navy) 60%, #1d4e89 100%);
+  background: linear-gradient(135deg, var(--navy-dark) 0%, var(--navy) 60%, var(--menu-grad-accent) 100%);
   color: var(--white);
 }
 .menu-logo {
@@ -82,6 +154,15 @@ html, body {
   font-size: clamp(.85rem, 3vw, 1.1rem);
   opacity: .75;
   margin-top: 6px;
+}
+.current-player-banner {
+  background: var(--banner-bg);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: .82rem;
+  font-weight: 700;
+  color: var(--banner-fg);
+  text-align: center;
 }
 .menu-buttons { display: flex; flex-direction: column; gap: 16px; width: min(280px, 90vw); }
 
@@ -106,11 +187,11 @@ html, body {
 .btn:hover  { filter: brightness(1.1); }
 .btn:active { transform: scale(.97); }
 
-.btn-primary  { background: var(--teal);    color: var(--white); }
-.btn-secondary{ background: var(--navy);    color: var(--white); }
-.btn-success  { background: var(--success); color: var(--white); }
-.btn-danger   { background: var(--danger);  color: var(--white); }
-.btn-warning  { background: var(--warning); color: var(--white); }
+.btn-primary  { background: var(--teal);    color: var(--on-primary); }
+.btn-secondary{ background: var(--navy);    color: var(--on-secondary); }
+.btn-success  { background: var(--success); color: var(--on-success); }
+.btn-danger   { background: var(--danger);  color: var(--on-danger); }
+.btn-warning  { background: var(--warning); color: var(--on-warning); }
 .btn-outline  { background: transparent; border: 2px solid var(--white); color: var(--white); }
 .btn-sm       { padding: 6px 14px; font-size: .82rem; }
 .btn-lg       { padding: 15px 30px; font-size: 1.05rem; }

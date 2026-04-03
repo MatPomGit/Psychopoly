@@ -336,10 +336,20 @@ function saveSettings() {
   localStorage.setItem('psychopoly-settings', JSON.stringify(gameSettings));
 }
 
+function getThemeClassName(themeKey) {
+  const allowedThemes = ['classic', 'dark', 'calm'];
+  const resolved = allowedThemes.includes(themeKey) ? themeKey : 'classic';
+  return `theme-${resolved}`;
+}
+
 function applySettings() {
+  const themeClass = getThemeClassName(gameSettings.theme);
   document.documentElement.style.setProperty('--ui-font-scale', gameSettings.fontScale || 1);
   document.documentElement.style.setProperty('--anim-speed-mult', gameSettings.animationSpeed || 1);
   document.documentElement.style.setProperty('--fx-intensity', gameSettings.boardFxIntensity || 1);
+  document.body.classList.remove('theme-classic', 'theme-dark', 'theme-calm');
+  document.body.classList.add(themeClass);
+  document.documentElement.classList.remove('theme-preload-classic', 'theme-preload-dark', 'theme-preload-calm');
   document.body.classList.remove('quality-low', 'quality-medium', 'quality-high');
   document.body.classList.add(`quality-${gameSettings.renderQuality || 'high'}`);
 }
@@ -348,11 +358,13 @@ function syncSettingsForm() {
   const anim = document.getElementById('setting-animation-speed');
   const font = document.getElementById('setting-font-scale');
   const quality = document.getElementById('setting-render-quality');
+  const theme = document.getElementById('setting-theme');
   const balancePreset = document.getElementById('setting-balance-preset');
   const fx = document.getElementById('setting-fx-intensity');
   if (anim) anim.value = String(gameSettings.animationSpeed || 1);
   if (font) font.value = String(gameSettings.fontScale || 1);
   if (quality) quality.value = gameSettings.renderQuality || 'high';
+  if (theme) theme.value = gameSettings.theme || 'classic';
   if (balancePreset) balancePreset.value = getBalancePresetKey();
   if (fx) fx.value = String(gameSettings.boardFxIntensity || 1);
   refreshSettingsLiveLabels();
@@ -1544,6 +1556,7 @@ function setupGameHandlers() {
       gameSettings.animationSpeed = parseFloat(document.getElementById('setting-animation-speed').value) || 1;
       gameSettings.fontScale = parseFloat(document.getElementById('setting-font-scale').value) || 1;
       gameSettings.renderQuality = document.getElementById('setting-render-quality').value || 'high';
+      gameSettings.theme = document.getElementById('setting-theme').value || 'classic';
       gameSettings.boardFxIntensity = parseFloat(document.getElementById('setting-fx-intensity').value) || 1;
       gameSettings.balancePreset = document.getElementById('setting-balance-preset').value || DEFAULT_BALANCE_PRESET;
       applyBalanceProfileFromSettings();
