@@ -1,0 +1,65 @@
+{
+  "gamesPerPreset": 300,
+  "presets": {
+    "szybka": {
+      "label": "Szybka",
+      "profile": {
+        "label": "Szybka",
+        "startingMoney": 1200,
+        "goMoney": 160,
+        "jailFine": 80,
+        "developmentCostMultiplier": 0.8,
+        "penaltyMultiplier": 1.2,
+        "cardMoneyMultiplier": 1.15
+      },
+      "telemetry": {
+        "games": 300,
+        "avgTurns": 47.6,
+        "avgBankruptcies": 0.37,
+        "avgCashflowPerTurn": -61.3,
+        "avgCardImpactPerDraw": 96.77,
+        "winnerNotRichestCashRate": 42.33
+      }
+    },
+    "standard": {
+      "label": "Standard",
+      "profile": {
+        "label": "Standard",
+        "startingMoney": 1500,
+        "goMoney": 200,
+        "jailFine": 60,
+        "developmentCostMultiplier": 0.95,
+        "penaltyMultiplier": 1,
+        "cardMoneyMultiplier": 1
+      },
+      "telemetry": {
+        "games": 300,
+        "avgTurns": 47.58,
+        "avgBankruptcies": 0.41,
+        "avgCashflowPerTurn": -64.41,
+        "avgCardImpactPerDraw": 85.69,
+        "winnerNotRichestCashRate": 35.33
+      }
+    },
+    "strategiczna": {
+      "label": "Strategiczna",
+      "profile": {
+        "label": "Strategiczna",
+        "startingMoney": 1750,
+        "goMoney": 180,
+        "jailFine": 100,
+        "developmentCostMultiplier": 1.15,
+        "penaltyMultiplier": 1.1,
+        "cardMoneyMultiplier": 0.9
+      },
+      "telemetry": {
+        "games": 300,
+        "avgTurns": 47.6,
+        "avgBankruptcies": 0.44,
+        "avgCashflowPerTurn": -73.35,
+        "avgCardImpactPerDraw": 75.47,
+        "winnerNotRichestCashRate": 38
+      }
+    }
+  }
+}

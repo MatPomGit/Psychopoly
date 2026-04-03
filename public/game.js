@@ -18,10 +18,7 @@ const PAWN_OPTIONS = [
   { id: 'puzzle', name: 'Puzzle',    icon: 'assets/pawns/puzzle.svg' },
   { id: 'book',   name: 'Książka',   icon: 'assets/pawns/book.svg' },
 ];
-const STARTING_MONEY   = 1500;
-const GO_MONEY         = 200;
 const JAIL_POSITION    = 14;
-const JAIL_FINE        = 50;
 const MAX_JAIL_TURNS   = 3;
 const STARTING_PRESTIGE = 10;
 const STARTING_ENERGY = 50;
@@ -29,6 +26,9 @@ const STARTING_ETHICS = 50;
 const CRITICAL_BURNOUT = 100;
 const MAX_ROUNDS = 12;
 const AI_CASH_BUFFER = 300;
+const AI_DECISION_DELAY_MS = 850;
+const AI_PERSONALITY_TYPES = ['conservative', 'balanced', 'aggressive'];
+const ONBOARDING_SEEN_KEY = 'psychopoly-onboarding-seen';
 
 const DICE_FACES = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
 
@@ -41,6 +41,16 @@ const PHASE_LABELS = {
   'end-turn':     'Zakończ turę',
   jailed:         'Jesteś w stanie kryzysu',
   end:            'Koniec gry',
+};
+const PHASE_CHECKLIST_STEP = {
+  rolling: 0,
+  jailed: 0,
+  moving: 1,
+  buying: 2,
+  card: 2,
+  'card-select': 2,
+  'end-turn': 3,
+  end: 3,
 };
 
 // ============================================================
@@ -55,6 +65,10 @@ let myPlayerColor = PLAYER_COLORS[0];
 let myPlayerPawn = PAWN_OPTIONS[0].id;
 let currentRoomId = null;
 let isHost        = false;
+let myReady       = false;
+let lobbyPlayers  = [];
+let currentHostPlayerId = 0;
+let socketConnectionStatus = 'reconnecting';
 let boardRendered = false;
 let localSelections = [];
 const AUDIO_PREFS_KEY = 'psychopoly-audio-prefs-v1';
@@ -102,12 +116,56 @@ let boardPanX = 0;
 let boardPanY = 0;
 let isDraggingBoard = false;
 let aiStepPending = false;
+let aiStepTimer = null;
+let lastAiDecisionAt = 0;
 let dragStartX = 0;
 let dragStartY = 0;
 let movedPlayersLastUpdate = [];
 let isAnimating = false;
 let animatingPlayerData = null; // { playerId, animPos }
 let gameSettings = { ...(window.PSYCHOPOLY_DEFAULT_CONFIG || {}) };
+let logFilterMode = 'all';
+const BALANCE_PRESETS = window.PSYCHOPOLY_BALANCE_PRESETS || {};
+const DEFAULT_BALANCE_PRESET = (window.PSYCHOPOLY_DEFAULT_CONFIG && window.PSYCHOPOLY_DEFAULT_CONFIG.balancePreset) || "standard";
+let activeBalanceProfile = null;
+let ACTIVE_BOARD_SPACES = [...BOARD_SPACES];
+let ACTIVE_INSIGHT_CARDS = [...INSIGHT_CARDS];
+let ACTIVE_SESSION_CARDS = [...SESSION_CARDS];
+let onboardingStepIndex = 0;
+let onboardingActive = false;
+let onboardingShownThisSession = false;
+let onboardingHighlightedEl = null;
+
+const ONBOARDING_STEPS = [
+  {
+    title: 'Cel gry',
+    text: 'Budujesz praktykę psychologiczną przez 12 rund. Wygrywa osoba z najwyższym wynikiem całkowitym, nie tylko z największą gotówką.',
+    selector: '#phase-info',
+  },
+  {
+    title: 'Rzut i ruch',
+    text: 'Zacznij turę od rzutu kostkami. Kliknij ten przycisk, aby ruszyć pionkiem i uruchomić efekt pola.',
+    selector: '#btn-roll',
+  },
+  {
+    title: 'Zakup i rozwój',
+    text: 'Po wejściu na wolne aktywo możesz je kupić lub pominąć. Rozsądne zakupy zwiększają długofalowe przychody i stabilność.',
+    selector: '#phase-info',
+  },
+  {
+    title: 'Koniec tury i gracze',
+    text: 'Po wykonaniu akcji zakończ turę. W zakładce Gracze śledzisz zasoby wszystkich uczestników.',
+    selector: '#players-list-panel',
+    activateTab: 'players',
+  },
+  {
+    title: 'Jak wygrać',
+    text: 'Najlepsza strategia to balans zasobów: gotówki, prestiżu, energii i etyki przy kontrolowaniu wypalenia. Sama gotówka nie wystarczy.',
+    selector: '#phase-info',
+    activateTab: 'actions',
+  },
+];
+const modalFocusReturnMap = new Map();
 
 // Stat colors (matching CSS .stat-* classes)
 const STAT_COLORS = {
@@ -120,6 +178,46 @@ const STAT_COLORS = {
   props:       '#f39c12',
   cards:       '#a8e6cf',
 };
+
+function roundMoney(value) {
+  return Math.round(value);
+}
+
+function getBalancePresetKey() {
+  const key = gameSettings.balancePreset || DEFAULT_BALANCE_PRESET;
+  return BALANCE_PRESETS[key] ? key : DEFAULT_BALANCE_PRESET;
+}
+
+function getBalanceProfile() {
+  const standard = BALANCE_PRESETS.standard || {};
+  const selected = BALANCE_PRESETS[getBalancePresetKey()] || {};
+  return { ...standard, ...selected, name: getBalancePresetKey() };
+}
+
+function withCardMoneyMultiplier(card, multiplier) {
+  const next = { ...card };
+  ['money', 'amount', 'perHouse', 'perHotel'].forEach((field) => {
+    if (typeof next[field] === 'number') next[field] = roundMoney(next[field] * multiplier);
+  });
+  return next;
+}
+
+function applyBalanceProfileFromSettings() {
+  activeBalanceProfile = getBalanceProfile();
+  ACTIVE_BOARD_SPACES = BOARD_SPACES.map((space) => {
+    const next = { ...space };
+    if (space.type === 'property') {
+      next.houseCost = roundMoney(space.houseCost * activeBalanceProfile.developmentCostMultiplier);
+      next.hotelCost = roundMoney(space.hotelCost * activeBalanceProfile.developmentCostMultiplier);
+    }
+    if (space.type === 'tax' && typeof space.amount === 'number') {
+      next.amount = roundMoney(space.amount * activeBalanceProfile.penaltyMultiplier);
+    }
+    return next;
+  });
+  ACTIVE_INSIGHT_CARDS = INSIGHT_CARDS.map((card) => withCardMoneyMultiplier(card, activeBalanceProfile.cardMoneyMultiplier));
+  ACTIVE_SESSION_CARDS = SESSION_CARDS.map((card) => withCardMoneyMultiplier(card, activeBalanceProfile.cardMoneyMultiplier));
+}
 
 // ============================================================
 // UTILITIES
@@ -158,6 +256,24 @@ function askPlayerChoice(message) {
 function formatMoney(n) { return n + ' zł'; }
 function clampStat(value, min = 0, max = 100) { return Math.max(min, Math.min(max, value)); }
 
+function classifyLogType(msg = '', isTurn = false) {
+  if (isTurn) return 'turn';
+  const t = String(msg).toLowerCase();
+  if (t.includes('💀') || t.includes('zbankrut') || t.includes('odpada') || t.includes('wygrywa') || t.includes('wygrał')) return 'bankrupt';
+  if (t.includes('karta') || t.includes('ciągnie') || t.includes('szansy') || t.includes('społeczności')) return 'card';
+  if (t.includes('izolacji') || t.includes('kara') || t.includes('płaci') || t.includes('czynsz') || t.includes('podatk')) return 'penalty';
+  if (t.includes('zł') || t.includes('kupił') || t.includes('zastawił') || t.includes('odkupił') || t.includes('sprzedał')) return 'money';
+  return 'turn';
+}
+
+function isLowValueSpamLog(msg = '', type = 'turn') {
+  if (type === 'bankrupt' || type === 'penalty' || type === 'card') return false;
+  const t = String(msg).toLowerCase();
+  if (t.includes('wylądował na swojej własności') || t.includes('zatrzymał się na wolnej woli') || t.includes('ma przystanek')) return true;
+  if (type === 'turn' && t.includes('--- tura gracza')) return false;
+  return false;
+}
+
 function getPrestigeScore(player) {
   return player.money + (player.prestige * 12) + (player.energy * 8) + (player.ethics * 8) - (player.burnout * 10);
 }
@@ -186,8 +302,16 @@ function applyPlayerDelta(gs, player, delta = {}, reason = '') {
   if (summary.length) addLog(gs, `${player.name}: ${summary.join(', ')}${reason ? ` (${reason})` : ''}.`);
 }
 
-function addLog(gs, msg, isTurn = false) {
-  gs.log.unshift({ text: msg, isTurn });
+function addLog(gs, msg, isTurn = false, type = null) {
+  const resolvedType = type || classifyLogType(msg, isTurn);
+  if (isLowValueSpamLog(msg, resolvedType)) {
+    const duplicateLowValueCount = gs.log
+      .slice(0, 14)
+      .filter(entry => entry.type === resolvedType && entry.text === msg)
+      .length;
+    if (duplicateLowValueCount >= 2) return;
+  }
+  gs.log.unshift({ text: msg, isTurn, type: resolvedType, ts: Date.now() });
   if (gs.log.length > 80) gs.log.pop();
 }
 
@@ -209,16 +333,27 @@ function loadSettings() {
   } catch (_e) {
     gameSettings = { ...defaults };
   }
+  applyBalanceProfileFromSettings();
 }
 
 function saveSettings() {
   localStorage.setItem('psychopoly-settings', JSON.stringify(gameSettings));
 }
 
+function getThemeClassName(themeKey) {
+  const allowedThemes = ['classic', 'dark', 'calm'];
+  const resolved = allowedThemes.includes(themeKey) ? themeKey : 'classic';
+  return `theme-${resolved}`;
+}
+
 function applySettings() {
+  const themeClass = getThemeClassName(gameSettings.theme);
   document.documentElement.style.setProperty('--ui-font-scale', gameSettings.fontScale || 1);
   document.documentElement.style.setProperty('--anim-speed-mult', gameSettings.animationSpeed || 1);
   document.documentElement.style.setProperty('--fx-intensity', gameSettings.boardFxIntensity || 1);
+  document.body.classList.remove('theme-classic', 'theme-dark', 'theme-calm');
+  document.body.classList.add(themeClass);
+  document.documentElement.classList.remove('theme-preload-classic', 'theme-preload-dark', 'theme-preload-calm');
   document.body.classList.remove('quality-low', 'quality-medium', 'quality-high');
   document.body.classList.add(`quality-${gameSettings.renderQuality || 'high'}`);
 }
@@ -227,10 +362,14 @@ function syncSettingsForm() {
   const anim = document.getElementById('setting-animation-speed');
   const font = document.getElementById('setting-font-scale');
   const quality = document.getElementById('setting-render-quality');
+  const theme = document.getElementById('setting-theme');
+  const balancePreset = document.getElementById('setting-balance-preset');
   const fx = document.getElementById('setting-fx-intensity');
   if (anim) anim.value = String(gameSettings.animationSpeed || 1);
   if (font) font.value = String(gameSettings.fontScale || 1);
   if (quality) quality.value = gameSettings.renderQuality || 'high';
+  if (theme) theme.value = gameSettings.theme || 'classic';
+  if (balancePreset) balancePreset.value = getBalancePresetKey();
   if (fx) fx.value = String(gameSettings.boardFxIntensity || 1);
   refreshSettingsLiveLabels();
 }
@@ -322,9 +461,122 @@ function setupBoardViewportControls() {
 // SCREEN MANAGEMENT
 // ============================================================
 function showScreen(id) {
+  if (id !== 'screen-game' && onboardingActive) stopOnboarding();
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   syncMusicPlayback(id);
+}
+
+function getOnboardingSeen() {
+  try {
+    return localStorage.getItem(ONBOARDING_SEEN_KEY) === '1';
+  } catch (_e) {
+    return false;
+  }
+}
+
+function setOnboardingSeen(seen = true) {
+  try {
+    if (seen) localStorage.setItem(ONBOARDING_SEEN_KEY, '1');
+    else localStorage.removeItem(ONBOARDING_SEEN_KEY);
+  } catch (_e) {}
+}
+
+function setupOnboardingHandlers() {
+  const btnSkip = document.getElementById('btn-onboarding-skip');
+  const btnPrev = document.getElementById('btn-onboarding-prev');
+  const btnNext = document.getElementById('btn-onboarding-next');
+  const btnFinish = document.getElementById('btn-onboarding-finish');
+
+  if (btnSkip) {
+    btnSkip.addEventListener('click', () => {
+      const neverShow = document.getElementById('onboarding-never-show')?.checked;
+      if (neverShow) setOnboardingSeen(true);
+      stopOnboarding();
+    });
+  }
+  if (btnPrev) {
+    btnPrev.addEventListener('click', () => {
+      onboardingStepIndex = Math.max(0, onboardingStepIndex - 1);
+      renderOnboardingStep();
+    });
+  }
+  if (btnNext) {
+    btnNext.addEventListener('click', () => {
+      onboardingStepIndex = Math.min(ONBOARDING_STEPS.length - 1, onboardingStepIndex + 1);
+      renderOnboardingStep();
+    });
+  }
+  if (btnFinish) {
+    btnFinish.addEventListener('click', () => {
+      setOnboardingSeen(true);
+      stopOnboarding();
+      showToast('Powodzenia! Pilnuj balansu zasobów, a nie tylko gotówki.');
+    });
+  }
+}
+
+function maybeStartOnboarding() {
+  if (onboardingShownThisSession || onboardingActive || getOnboardingSeen()) return;
+  onboardingShownThisSession = true;
+  onboardingActive = true;
+  onboardingStepIndex = 0;
+  const neverInput = document.getElementById('onboarding-never-show');
+  if (neverInput) neverInput.checked = false;
+  openModal('modal-onboarding');
+  renderOnboardingStep();
+}
+
+function stopOnboarding() {
+  onboardingActive = false;
+  clearOnboardingHighlight();
+  closeModal('modal-onboarding');
+}
+
+function clearOnboardingHighlight() {
+  if (onboardingHighlightedEl) onboardingHighlightedEl.classList.remove('onboarding-highlight');
+  onboardingHighlightedEl = null;
+}
+
+function activateOnboardingTab(tabName) {
+  if (!tabName) return;
+  const tabBtn = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
+  if (!tabBtn) return;
+  tabBtn.click();
+}
+
+function renderOnboardingStep() {
+  if (!onboardingActive) return;
+  const step = ONBOARDING_STEPS[onboardingStepIndex];
+  if (!step) return;
+
+  activateOnboardingTab(step.activateTab);
+  clearOnboardingHighlight();
+
+  const titleEl = document.getElementById('onboarding-title');
+  const textEl = document.getElementById('onboarding-text');
+  const indicatorEl = document.getElementById('onboarding-step-indicator');
+  const btnPrev = document.getElementById('btn-onboarding-prev');
+  const btnNext = document.getElementById('btn-onboarding-next');
+  const btnFinish = document.getElementById('btn-onboarding-finish');
+
+  if (titleEl) titleEl.textContent = step.title;
+  if (textEl) textEl.textContent = step.text;
+  if (indicatorEl) indicatorEl.textContent = `Krok ${onboardingStepIndex + 1}/${ONBOARDING_STEPS.length}`;
+  if (btnPrev) btnPrev.disabled = onboardingStepIndex === 0;
+
+  const isLast = onboardingStepIndex === ONBOARDING_STEPS.length - 1;
+  if (btnNext) btnNext.style.display = isLast ? 'none' : 'inline-flex';
+  if (btnFinish) btnFinish.style.display = isLast ? 'inline-flex' : 'none';
+
+  if (step.selector) {
+    const targetEl = document.querySelector(step.selector);
+    if (targetEl) {
+      onboardingHighlightedEl = targetEl;
+      onboardingHighlightedEl.classList.add('onboarding-highlight');
+      onboardingHighlightedEl.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    }
+  }
 }
 
 // ============================================================
@@ -338,6 +590,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupLocalSetupHandlers();
   setupOnlineLobbyHandlers();
   setupGameHandlers();
+  setupOnboardingHandlers();
   bindGlobalButtonSfx();
   setupBoardViewportControls();
   showScreen('screen-menu');
@@ -623,6 +876,7 @@ function renderPlayerNameInputs(count) {
       btn.type = 'button';
       btn.className = `token-choice${opt.id === row.dataset.pawn ? ' active' : ''}`;
       btn.title = opt.name;
+      btn.setAttribute('aria-label', `Wybierz pionek: ${opt.name}`);
       btn.dataset.pawn = opt.id;
       btn.innerHTML = `<img src="${opt.icon}" alt="${opt.name}">`;
       btn.addEventListener('click', () => {
@@ -640,6 +894,7 @@ function renderPlayerNameInputs(count) {
       btn.style.background = color;
       btn.dataset.color = color;
       btn.title = color;
+      btn.setAttribute('aria-label', `Wybierz kolor: ${color}`);
       btn.addEventListener('click', () => {
         row.dataset.color = color;
         colorList.querySelectorAll('.color-choice').forEach(el => el.classList.remove('active'));
@@ -708,10 +963,36 @@ function setupOnlineLobbyHandlers() {
     showScreen('screen-menu');
   });
 
+  document.getElementById('btn-lobby-ready').addEventListener('click', () => {
+    if (!socket || socketConnectionStatus !== 'połączono') {
+      showToast('Brak połączenia z serwerem online.');
+      return;
+    }
+    socket.emit('set-ready', { ready: !myReady });
+  });
+
   document.getElementById('btn-lobby-start').addEventListener('click', () => {
     if (!isHost) { showToast('Tylko host może rozpocząć grę.'); return; }
     if (!socket) { showToast('Brak połączenia z serwerem online.'); return; }
-    if (socket) socket.emit('start-game');
+    const reason = getStartBlockReason(lobbyPlayers);
+    if (reason) { showToast(reason); return; }
+    socket.emit('start-game');
+  });
+
+  document.getElementById('btn-copy-room-code').addEventListener('click', async () => {
+    const code = (document.getElementById('lobby-room-code').textContent || '').trim();
+    if (!code) return;
+    const confirmation = document.getElementById('lobby-copy-confirmation');
+    try {
+      await navigator.clipboard.writeText(code);
+      confirmation.textContent = 'Skopiowano kod pokoju.';
+      confirmation.style.display = 'block';
+      showToast('Kod pokoju skopiowany.');
+    } catch (_err) {
+      confirmation.textContent = 'Nie udało się skopiować kodu. Skopiuj ręcznie.';
+      confirmation.style.display = 'block';
+      showToast('Nie udało się skopiować kodu.');
+    }
   });
 }
 
@@ -728,6 +1009,7 @@ function renderOnlineSelections() {
     btn.className = `token-choice${i === 0 ? ' active' : ''}`;
     btn.innerHTML = `<img src="${opt.icon}" alt="${opt.name}">`;
     btn.title = opt.name;
+    btn.setAttribute('aria-label', `Wybierz pionek: ${opt.name}`);
     btn.addEventListener('click', () => {
       myPlayerPawn = opt.id;
       tokenList.querySelectorAll('.token-choice').forEach(el => el.classList.remove('active'));
@@ -742,6 +1024,7 @@ function renderOnlineSelections() {
     btn.type = 'button';
     btn.className = `color-choice${i === 0 ? ' active' : ''}`;
     btn.style.background = color;
+    btn.setAttribute('aria-label', `Wybierz kolor: ${color}`);
     btn.addEventListener('click', () => {
       myPlayerColor = color;
       colorList.querySelectorAll('.color-choice').forEach(el => el.classList.remove('active'));
@@ -767,10 +1050,69 @@ function resetLobbyUI() {
   document.getElementById('lobby-step-waiting').style.display = 'none';
   document.getElementById('online-player-name').value = '';
   document.getElementById('online-error').textContent = '';
+  document.getElementById('lobby-copy-confirmation').style.display = 'none';
+  document.getElementById('lobby-start-block-reason').textContent = '';
+  document.getElementById('lobby-connection-status').textContent = 'Status: reconnecting';
+  document.getElementById('lobby-ready-count').textContent = 'Gotowi: 0/0';
   myPlayerName = '';
   myPlayerColor = AVAILABLE_COLORS[0];
   myPlayerPawn = PAWN_OPTIONS[0].id;
+  currentRoomId = null;
+  myPlayerId = null;
+  isHost = false;
+  myReady = false;
+  lobbyPlayers = [];
+  currentHostPlayerId = 0;
+  socketConnectionStatus = 'reconnecting';
   renderOnlineSelections();
+}
+
+function setConnectionStatus(status, message) {
+  socketConnectionStatus = status;
+  const el = document.getElementById('lobby-connection-status');
+  if (el) {
+    const base = `Status: ${status}`;
+    el.textContent = message ? `${base} — ${message}` : base;
+  }
+  refreshLobbyControls();
+}
+
+function getStartBlockReason(players) {
+  if (!Array.isArray(players) || players.length < 2) {
+    return 'Start zablokowany: potrzeba co najmniej 2 graczy.';
+  }
+  const notReady = players.filter(p => !p.ready);
+  if (notReady.length > 0) {
+    const names = notReady.map(p => p.name).join(', ');
+    return `Start zablokowany: czekamy na gotowość (${names}).`;
+  }
+  return '';
+}
+
+function refreshLobbyControls() {
+  const readyBtn = document.getElementById('btn-lobby-ready');
+  if (readyBtn) {
+    readyBtn.textContent = myReady ? '✅ Gotowy' : '☐ Gotowy';
+    readyBtn.classList.toggle('btn-success', myReady);
+    readyBtn.classList.toggle('btn-secondary', !myReady);
+    readyBtn.disabled = !socket || socketConnectionStatus !== 'połączono';
+  }
+  const readyCount = lobbyPlayers.filter(p => p.ready).length;
+  const readyCountEl = document.getElementById('lobby-ready-count');
+  if (readyCountEl) {
+    readyCountEl.textContent = `Gotowi: ${readyCount}/${lobbyPlayers.length}`;
+  }
+
+  const startBtn = document.getElementById('btn-lobby-start');
+  const reason = getStartBlockReason(lobbyPlayers);
+  if (startBtn) {
+    startBtn.style.display = isHost ? 'inline-flex' : 'none';
+    startBtn.disabled = Boolean(reason) || !socket || socketConnectionStatus !== 'połączono';
+  }
+  const reasonEl = document.getElementById('lobby-start-block-reason');
+  if (reasonEl) {
+    reasonEl.textContent = isHost ? (reason || 'Możesz rozpocząć grę.') : '';
+  }
 }
 
 // ============================================================
@@ -782,14 +1124,29 @@ function initSocket() {
     showToast('Tryb online jest niedostępny bez serwera Socket.io.');
     return;
   }
-  socket = io();
+  socket = io({
+    timeout: 8000,
+    reconnection: true,
+    reconnectionAttempts: 6,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 4000,
+  });
 
   socket.on('connect', () => {
     console.log('[socket] connected', socket.id);
+    setConnectionStatus('połączono');
+    if (currentRoomId && myPlayerName) {
+      showToast('Połączono ponownie z serwerem. Jeśli byłeś(-aś) w lobby, dołącz ponownie do pokoju.');
+    }
   });
 
-  socket.on('disconnect', () => {
-    showToast('Rozłączono z serwerem.');
+  socket.on('disconnect', (reason) => {
+    if (reason === 'io client disconnect') {
+      setConnectionStatus('rozłączono', `rozłączono (${reason})`);
+      return;
+    }
+    setConnectionStatus('reconnecting', `rozłączono (${reason || 'brak powodu'})`);
+    showToast('Rozłączono z serwerem. Trwa ponowne łączenie…');
   });
 
   socket.on('error', ({ message }) => {
@@ -797,10 +1154,31 @@ function initSocket() {
     showToast('Błąd: ' + message);
   });
 
+  socket.io.on('reconnect_attempt', (attempt) => {
+    setConnectionStatus('reconnecting', `próba ${attempt}/6`);
+  });
+
+  socket.io.on('reconnect_error', () => {
+    setConnectionStatus('reconnecting', 'błąd podczas ponownego łączenia');
+  });
+
+  socket.io.on('reconnect_failed', () => {
+    setConnectionStatus('reconnecting', 'nie udało się połączyć ponownie');
+    showToast('Nie udało się odzyskać połączenia. Spróbuj wrócić do menu i wejść ponownie.');
+  });
+
+  socket.on('connect_error', (err) => {
+    const msg = err?.message || 'timeout połączenia';
+    document.getElementById('online-error').textContent = `Problem z połączeniem: ${msg}.`;
+    setConnectionStatus('reconnecting', msg);
+    showToast('Problem z połączeniem. Trwa ponawianie...');
+  });
+
   socket.on('room-created', ({ roomId, playerId, players }) => {
     currentRoomId = roomId;
     myPlayerId    = playerId;
     isHost        = true;
+    myReady       = false;
     showLobbyWaiting(roomId, players, true);
   });
 
@@ -808,11 +1186,18 @@ function initSocket() {
     currentRoomId = roomId;
     myPlayerId    = playerId;
     isHost        = false;
+    myReady       = false;
     showLobbyWaiting(roomId, players, false);
   });
 
-  socket.on('player-joined', ({ players }) => {
+  socket.on('room-state', ({ roomId, players, hostPlayerId }) => {
+    currentRoomId = roomId;
+    currentHostPlayerId = hostPlayerId;
+    isHost = hostPlayerId === myPlayerId;
+    const me = players.find(p => p.playerId === myPlayerId);
+    myReady = Boolean(me && me.ready);
     renderLobbyPlayers(players);
+    refreshLobbyControls();
   });
 
   socket.on('game-started', (gs) => {
@@ -835,22 +1220,33 @@ function showLobbyWaiting(roomId, players, host) {
   document.getElementById('lobby-step-choose').style.display = 'none';
   document.getElementById('lobby-step-waiting').style.display = 'block';
   document.getElementById('lobby-room-code').textContent = roomId;
+  document.getElementById('lobby-copy-confirmation').style.display = 'none';
+  setConnectionStatus(socket && socket.connected ? 'połączono' : 'reconnecting');
+  isHost = host;
+  currentHostPlayerId = host ? myPlayerId : (players.find(p => p.playerId === 0)?.playerId ?? 0);
   renderLobbyPlayers(players);
-  document.getElementById('btn-lobby-start').style.display = host ? 'inline-flex' : 'none';
   document.getElementById('lobby-status').textContent = host
     ? 'Oczekiwanie na graczy… (min. 2, maks. 4)'
     : 'Oczekiwanie na start gry przez gospodarza…';
+  refreshLobbyControls();
 }
 
 function renderLobbyPlayers(players) {
+  lobbyPlayers = Array.isArray(players) ? players : [];
   const list = document.getElementById('lobby-players-list');
   list.innerHTML = '';
-  players.forEach(p => {
+  lobbyPlayers.forEach(p => {
     const row = document.createElement('div');
     row.className = 'lobby-player-row';
+    const badges = [
+      `<span class="lobby-badge lobby-badge-conn">${socketConnectionStatus}</span>`,
+      p.playerId === currentHostPlayerId ? '<span class="lobby-badge lobby-badge-host">host</span>' : '',
+      p.ready ? '<span class="lobby-badge lobby-badge-ready">gotowy</span>' : '',
+    ].filter(Boolean).join('');
     row.innerHTML = `
       <div class="player-token-sm" style="background:${p.color}; background-image:url('${getPawnIcon(p.pawn)}')">${getInitial(p.name)}</div>
-      <span>${p.name}${p.playerId === myPlayerId ? ' (Ty)' : ''}</span>`;
+      <span>${p.name}${p.playerId === myPlayerId ? ' (Ty)' : ''}</span>
+      <span class="lobby-player-badges">${badges}</span>`;
     list.appendChild(row);
   });
 }
@@ -866,7 +1262,8 @@ function createGameState(playerConfigs) {
       color:              p.color || PLAYER_COLORS[i],
       pawn:               p.pawn || PAWN_OPTIONS[i % PAWN_OPTIONS.length].id,
       isAI:               p.isAI || false,
-      money:              STARTING_MONEY,
+      aiPersonality:      p.aiPersonality || (p.isAI ? AI_PERSONALITY_TYPES[i % AI_PERSONALITY_TYPES.length] : null),
+      money:              activeBalanceProfile.startingMoney,
       prestige:           STARTING_PRESTIGE,
       energy:             STARTING_ENERGY,
       ethics:             STARTING_ETHICS,
@@ -886,8 +1283,8 @@ function createGameState(playerConfigs) {
     doubles:         0,
     turn:            0,
     roundsCompleted: 0,
-    insightCards:    shuffleArray([...INSIGHT_CARDS]),
-    sessionCards:    shuffleArray([...SESSION_CARDS]),
+    insightCards:    shuffleArray([...ACTIVE_INSIGHT_CARDS]),
+    sessionCards:    shuffleArray([...ACTIVE_SESSION_CARDS]),
     insightDiscard:  [],
     sessionDiscard:  [],
     log:             [],
@@ -905,9 +1302,14 @@ function createGameState(playerConfigs) {
 function startLocalGame(playerConfigs) {
   gameMode  = 'local';
   myPlayerId = 0;   // in local mode all players use same device
+  applyBalanceProfileFromSettings();
   localGame  = createGameState(playerConfigs);
   aiStepPending = false;
-  if (!boardRendered) { renderBoard(); boardRendered = true; }
+  if (aiStepTimer) clearTimeout(aiStepTimer);
+  aiStepTimer = null;
+  lastAiDecisionAt = 0;
+  renderBoard();
+  boardRendered = true;
   // Chat offline note for local mode
   const offlineNote = document.getElementById('chat-drawer-offline-note');
   const drawerInput = document.getElementById('chat-drawer-input');
@@ -916,8 +1318,10 @@ function startLocalGame(playerConfigs) {
   if (drawerInput) drawerInput.disabled = true;
   if (drawerSend)  drawerSend.disabled  = true;
   showScreen('screen-game');
+  showToast(`Preset balansu: ${activeBalanceProfile.label}`);
   addLog(localGame, `--- Tura gracza ${localGame.players[0].name} ---`, true);
   updateUI(localGame);
+  window.setTimeout(maybeStartOnboarding, 180);
 }
 
 // ============================================================
@@ -934,6 +1338,7 @@ function startOnlineGame(gs) {
   if (drawerSend)  drawerSend.disabled  = false;
   showScreen('screen-game');
   applyOnlineState(gs);
+  window.setTimeout(maybeStartOnboarding, 180);
 }
 
 function applyOnlineState(gs) {
@@ -946,15 +1351,61 @@ function applyOnlineState(gs) {
 // ============================================================
 function setupGameHandlers() {
   // Tabs
-  document.querySelectorAll('.tab-btn').forEach(btn => {
+  const tabs = Array.from(document.querySelectorAll('.tab-btn'));
+  const activateTab = (btn) => {
+    if (!btn) return;
+    const tab = btn.dataset.tab;
+    tabs.forEach(b => {
+      b.classList.remove('active');
+      b.setAttribute('aria-selected', 'false');
+      b.tabIndex = -1;
+    });
+    document.querySelectorAll('.panel-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    btn.setAttribute('aria-selected', 'true');
+    btn.tabIndex = 0;
+    const panel = document.getElementById(tab + '-content');
+    if (panel) panel.classList.add('active');
+  };
+  tabs.forEach(btn => {
     btn.addEventListener('click', () => {
-      const tab = btn.dataset.tab;
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.panel-content').forEach(c => c.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById(tab + '-content').classList.add('active');
+      activateTab(btn);
+    });
+    btn.addEventListener('keydown', (e) => {
+      const currentIndex = tabs.indexOf(btn);
+      if (currentIndex === -1) return;
+      let nextIndex = null;
+      if (e.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabs.length;
+      if (e.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+      if (e.key === 'Home') nextIndex = 0;
+      if (e.key === 'End') nextIndex = tabs.length - 1;
+      if (nextIndex === null) return;
+      e.preventDefault();
+      tabs[nextIndex].focus();
+      activateTab(tabs[nextIndex]);
     });
   });
+
+  const logFilters = document.getElementById('log-filters');
+  if (logFilters) {
+    logFilters.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('.log-filter-btn');
+      if (!btn) return;
+      logFilterMode = btn.dataset.logFilter || 'all';
+      logFilters.querySelectorAll('.log-filter-btn').forEach((el) => {
+        el.classList.toggle('active', el === btn);
+      });
+      if (localGame) renderLogPanel(localGame);
+    });
+  }
+
+  const logTopBtn = document.getElementById('btn-log-top');
+  if (logTopBtn) {
+    logTopBtn.addEventListener('click', () => {
+      const logContent = document.getElementById('log-content');
+      if (logContent) logContent.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
 
   // Roll
   document.getElementById('btn-roll').addEventListener('click', () => {
@@ -1054,7 +1505,9 @@ function setupGameHandlers() {
   if (drawerToggle) {
     drawerToggle.addEventListener('click', () => {
       const drawer = document.getElementById('chat-drawer');
-      if (drawer) drawer.classList.toggle('open');
+      if (!drawer) return;
+      const isOpen = drawer.classList.toggle('open');
+      drawerToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
     });
   }
 
@@ -1108,6 +1561,7 @@ function setupGameHandlers() {
   if (btnSettingsReset) {
     btnSettingsReset.addEventListener('click', () => {
       gameSettings = { ...(window.PSYCHOPOLY_DEFAULT_CONFIG || {}) };
+      applyBalanceProfileFromSettings();
       applySettings();
       syncSettingsForm();
       saveSettings();
@@ -1121,7 +1575,10 @@ function setupGameHandlers() {
       gameSettings.animationSpeed = parseFloat(document.getElementById('setting-animation-speed').value) || 1;
       gameSettings.fontScale = parseFloat(document.getElementById('setting-font-scale').value) || 1;
       gameSettings.renderQuality = document.getElementById('setting-render-quality').value || 'high';
+      gameSettings.theme = document.getElementById('setting-theme').value || 'classic';
       gameSettings.boardFxIntensity = parseFloat(document.getElementById('setting-fx-intensity').value) || 1;
+      gameSettings.balancePreset = document.getElementById('setting-balance-preset').value || DEFAULT_BALANCE_PRESET;
+      applyBalanceProfileFromSettings();
       applySettings();
       saveSettings();
       closeModal('modal-settings');
@@ -1163,7 +1620,7 @@ function renderBoard() {
   const board = document.getElementById('board');
   board.innerHTML = '';
 
-  BOARD_SPACES.forEach(space => {
+  ACTIVE_BOARD_SPACES.forEach(space => {
     const pos = GRID_POSITIONS[space.id];
     const cell = document.createElement('div');
     cell.id    = `space-${space.id}`;
@@ -1512,7 +1969,7 @@ function renderBuildingIndicators(gs) {
 }
 
 function renderOwnershipRings(gs) {
-  BOARD_SPACES.forEach(space => {
+  ACTIVE_BOARD_SPACES.forEach(space => {
     const el = document.getElementById(`space-${space.id}`);
     if (!el) return;
     const ps = gs.properties[space.id];
@@ -1598,6 +2055,64 @@ function updateSidePanel(gs) {
   renderLogPanel(gs);
 }
 
+function getTurnGuidance(gs, { cur, myTurn, curIsAI }) {
+  const phase = gs.phase;
+  const phaseLabel = PHASE_LABELS[phase] || phase;
+  let recommendedMove = phaseLabel;
+
+  if (curIsAI) {
+    recommendedMove = 'Poczekaj, aż AI zakończy ruch.';
+  } else if (!myTurn) {
+    recommendedMove = 'Poczekaj na ruch aktywnego gracza.';
+  } else if (phase === 'rolling') {
+    if (cur.inJail) {
+      recommendedMove = cur.getOutOfJailCards > 0
+        ? 'Użyj karty wyjścia z kryzysu lub opłać karę.'
+        : 'Opłać karę albo rzuć kostkami.';
+    } else {
+      recommendedMove = 'Rzuć kostkami.';
+    }
+  } else if (phase === 'end-turn') {
+    recommendedMove = gs.doubles > 0
+      ? 'Masz dublet — rzuć kostkami ponownie.'
+      : 'Zakończ turę.';
+  } else if (phase === 'buying') {
+    recommendedMove = 'Wybierz: kup lub pomiń aktywo.';
+  } else if (phase === 'card-select') {
+    recommendedMove = gs.pendingCardDeck === 'insight'
+      ? 'Kliknij stos „Superwizja” na planszy.'
+      : 'Kliknij stos „Sesja” na planszy.';
+  } else if (phase === 'moving') {
+    recommendedMove = 'Poczekaj na zakończenie ruchu pionka.';
+  }
+
+  return {
+    phaseLabel,
+    recommendedMove,
+    checklistStep: PHASE_CHECKLIST_STEP[phase] ?? 0
+  };
+}
+
+function updateTurnStatusPanel(gs, { cur, myTurn, curIsAI, guidance }) {
+  const playerEl = document.getElementById('turn-status-player');
+  const phaseEl = document.getElementById('turn-status-phase');
+  const recEl = document.getElementById('turn-status-recommendation');
+  if (playerEl) {
+    if (gameMode === 'online' && !myTurn) playerEl.textContent = `${cur.name} (przeciwnik)`;
+    else if (curIsAI) playerEl.textContent = `${cur.name} 🤖`;
+    else playerEl.textContent = cur.name;
+    playerEl.style.color = cur.color;
+  }
+  if (phaseEl) phaseEl.textContent = guidance.phaseLabel;
+  if (recEl) recEl.textContent = guidance.recommendedMove;
+
+  document.querySelectorAll('#turn-checklist [data-step]').forEach((stepEl) => {
+    const step = Number(stepEl.dataset.step);
+    stepEl.classList.toggle('is-current', step === guidance.checklistStep);
+    stepEl.classList.toggle('is-done', step < guidance.checklistStep);
+  });
+}
+
 // ============================================================
 // TURN QUEUE BAR
 // ============================================================
@@ -1673,7 +2188,7 @@ function renderPlayersPanel(gs) {
     const card = document.createElement('div');
     card.className = `player-card-panel${i === gs.currentPlayerIndex ? ' active-turn' : ''}${player.bankrupt ? ' bankrupt' : ''}`;
     const propDots = player.properties.map(spaceId => {
-      const sp = BOARD_SPACES[spaceId];
+      const sp = ACTIVE_BOARD_SPACES[spaceId];
       const color = sp && sp.group ? GROUP_COLORS[sp.group] : '#999';
       return `<span class="prop-mini-dot" style="background:${color}" title="${sp ? sp.name : spaceId}"></span>`;
     }).join('');
@@ -1704,7 +2219,7 @@ function renderPropertiesPanel(gs) {
   groups['railroad'] = [];
   groups['utility']  = [];
 
-  BOARD_SPACES.forEach(space => {
+  ACTIVE_BOARD_SPACES.forEach(space => {
     const ps = gs.properties[space.id];
     if (!ps) return;
     const owner = gs.players[ps.owner];
@@ -1745,13 +2260,23 @@ function renderPropertiesPanel(gs) {
 function renderLogPanel(gs) {
   const list = document.getElementById('log-list');
   if (!list) return;
+  const filterToTypes = {
+    all: null,
+    finance: ['money', 'penalty'],
+    card: ['card'],
+    critical: ['penalty', 'bankrupt'],
+  };
+  const allowedTypes = filterToTypes[logFilterMode] || null;
   list.innerHTML = '';
-  gs.log.forEach(entry => {
+  gs.log
+    .filter((entry) => !allowedTypes || allowedTypes.includes(entry.type || classifyLogType(entry.text, entry.isTurn)))
+    .forEach(entry => {
     const div = document.createElement('div');
-    div.className = `log-entry${entry.isTurn ? ' log-turn' : ''}`;
+    const type = entry.type || classifyLogType(entry.text, entry.isTurn);
+    div.className = `log-entry log-type-${type}${entry.isTurn ? ' log-turn' : ''}`;
     div.textContent = entry.text;
     list.appendChild(div);
-  });
+    });
 }
 
 // ============================================================
@@ -1767,7 +2292,7 @@ function updateActionButtons(gs) {
   const myTurn = !curIsAI && (gameMode === 'local' || gs.currentPlayerIndex === myPlayerId);
 
   const phase = gs.phase;
-  let nextStepText = PHASE_LABELS[phase] || phase;
+  const guidance = getTurnGuidance(gs, { cur, myTurn, curIsAI });
   let primaryNextButtonId = null;
 
   const actionButtonIds = [
@@ -1804,13 +2329,14 @@ function updateActionButtons(gs) {
       banner.style.color = myTurn ? cur.color : 'rgba(255,255,255,.45)';
     }
   }
+  updateTurnStatusPanel(gs, { cur, myTurn, curIsAI, guidance });
 
   const phaseInfo = document.getElementById('phase-info');
   if (phaseInfo) {
     if (curIsAI) {
-      phaseInfo.innerHTML = `<span class="ai-thinking-indicator">🤖 AI myśli…</span>`;
+      phaseInfo.innerHTML = `<span class="ai-thinking-indicator">Status fazy: 🤖 AI myśli…</span>`;
     } else {
-      phaseInfo.innerHTML = `${PHASE_LABELS[phase] || phase}<br><strong>Następny krok:</strong> ${nextStepText}`;
+      phaseInfo.innerHTML = 'Szczegóły znajdziesz wyżej w panelu „Status tury”.';
     }
   }
 
@@ -1868,35 +2394,22 @@ function updateActionButtons(gs) {
   setDisabledReason(btnMortgage, managementDisabledReason);
 
   if (!curIsAI) {
-    if (!myTurn) {
-      nextStepText = 'Poczekaj na ruch aktywnego gracza.';
-    } else if (phase === 'rolling') {
+    if (myTurn && phase === 'rolling') {
       if (cur.inJail) {
         if (cur.getOutOfJailCards > 0) {
           primaryNextButtonId = 'btn-jail-card';
-          nextStepText = 'Użyj karty wyjścia z kryzysu lub opłać karę.';
         } else {
           primaryNextButtonId = 'btn-pay-jail';
-          nextStepText = 'Opłać karę albo rzuć kostkami.';
         }
       } else {
         primaryNextButtonId = 'btn-roll';
-        nextStepText = 'Rzuć kostkami.';
       }
-    } else if (phase === 'end-turn') {
+    } else if (myTurn && phase === 'end-turn') {
       if (gs.doubles > 0) {
         primaryNextButtonId = 'btn-roll';
-        nextStepText = 'Masz dublet — rzuć kostkami ponownie.';
       } else {
         primaryNextButtonId = 'btn-end-turn';
-        nextStepText = 'Zakończ turę.';
       }
-    } else if (phase === 'buying') {
-      nextStepText = 'Wybierz: kup lub pomiń aktywo (okno decyzji).';
-    } else if (phase === 'card-select') {
-      nextStepText = gs.pendingCardDeck === 'insight'
-        ? 'Kliknij stos „Superwizja” na planszy.'
-        : 'Kliknij stos „Sesja” na planszy.';
     }
 
     actionButtonIds.forEach((id) => {
@@ -1907,7 +2420,7 @@ function updateActionButtons(gs) {
     });
 
     if (phaseInfo) {
-      phaseInfo.innerHTML = `${PHASE_LABELS[phase] || phase}<br><strong>Następny krok:</strong> ${nextStepText}`;
+      phaseInfo.innerHTML = 'Szczegóły znajdziesz wyżej w panelu „Status tury”.';
     }
   }
 }
@@ -1977,10 +2490,10 @@ function handleJailRoll(gs, player, d1, d2, isDoubles) {
   } else {
     player.jailTurns++;
     if (player.jailTurns >= MAX_JAIL_TURNS) {
-      player.money    -= JAIL_FINE;
+      player.money    -= activeBalanceProfile.jailFine;
       player.inJail    = false;
       player.jailTurns = 0;
-      addLog(gs, `${player.name} zapłacił karę ${JAIL_FINE} zł i wyszedł z Izolacji.`);
+      addLog(gs, `${player.name} zapłacił karę ${activeBalanceProfile.jailFine} zł i wyszedł z Izolacji.`);
       checkBankruptcy(gs, player, null);
       doMove(gs, player, d1 + d2);
     } else {
@@ -1999,14 +2512,14 @@ function doMove(gs, player, steps) {
   startMoveAnimation(gs, player, oldPos, steps, () => {
     const newPos = (oldPos + steps) % 40;
     if (oldPos + steps >= 40) {
-      applyPlayerDelta(gs, player, { money: GO_MONEY, prestige: 2, energy: 1 }, 'START');
-      addLog(gs, `${player.name} przeszedł przez START — bonus miesięczny (+${GO_MONEY} zł, +2 prestiżu, +1 energii).`);
-      showToast(`${player.name} przeszedł przez START! +${GO_MONEY} zł / +2⭐ / +1🔋`);
+      applyPlayerDelta(gs, player, { money: activeBalanceProfile.goMoney, prestige: 2, energy: 1 }, 'START');
+      addLog(gs, `${player.name} przeszedł przez START — bonus miesięczny (+${activeBalanceProfile.goMoney} zł, +2 prestiżu, +1 energii).`);
+      showToast(`${player.name} przeszedł przez START! +${activeBalanceProfile.goMoney} zł / +2⭐ / +1🔋`);
     }
     player.position = newPos;
     isAnimating = false;
     animatingPlayerData = null;
-    const spaceName = BOARD_SPACES[newPos] ? BOARD_SPACES[newPos].name : `pole ${newPos}`;
+    const spaceName = ACTIVE_BOARD_SPACES[newPos] ? ACTIVE_BOARD_SPACES[newPos].name : `pole ${newPos}`;
     addLog(gs, `${player.name} wylądował na: ${spaceName}.`);
     handleLanding(gs, player);
     updateUI(gs);
@@ -2034,7 +2547,7 @@ function startMoveAnimation(gs, player, oldPos, steps, onComplete) {
 }
 
 function handleLanding(gs, player) {
-  const space = BOARD_SPACES[player.position];
+  const space = ACTIVE_BOARD_SPACES[player.position];
   if (!space) { gs.phase = 'end-turn'; return; }
 
   switch (space.type) {
@@ -2063,7 +2576,6 @@ function handleLanding(gs, player) {
       gs.phase = 'card-select';
       gs.pendingCardDeck = space.deck;
       addLog(gs, `${player.name} musi dobrać kartę ${space.deck === 'insight' ? 'Superwizji' : 'Sesji'}. Kliknij stos kart!`);
-      showToast(`Kliknij stos kart ${space.deck === 'insight' ? '🟧 Superwizja' : '🟦 Sesja'}!`);
       break;
     case 'jail':
       addLog(gs, `${player.name} ma przystanek: ${space.name}.`);
@@ -2119,13 +2631,13 @@ function handlePropertyLanding(gs, player, space) {
 
 function calculateRent(gs, space, propState) {
   if (space.type === 'railroad') {
-    const owned = BOARD_SPACES.filter(s =>
+    const owned = ACTIVE_BOARD_SPACES.filter(s =>
       s.type === 'railroad' && gs.properties[s.id] && gs.properties[s.id].owner === propState.owner
     ).length;
     return 25 * Math.pow(2, owned - 1); // 25, 50, 100, 200
   }
   if (space.type === 'utility') {
-    const owned = BOARD_SPACES.filter(s =>
+    const owned = ACTIVE_BOARD_SPACES.filter(s =>
       s.type === 'utility' && gs.properties[s.id] && gs.properties[s.id].owner === propState.owner
     ).length;
     const diceTotal = gs.dice[0] + gs.dice[1];
@@ -2136,7 +2648,7 @@ function calculateRent(gs, space, propState) {
   if (propState.houses > 0)   return space.rent[Math.min(propState.houses, 4)];
 
   // Check color monopoly
-  const groupProps = BOARD_SPACES.filter(s => s.type === 'property' && s.group === space.group);
+  const groupProps = ACTIVE_BOARD_SPACES.filter(s => s.type === 'property' && s.group === space.group);
   const ownsAll    = groupProps.every(s => gs.properties[s.id] && gs.properties[s.id].owner === propState.owner);
   return ownsAll ? space.rent[0] * 2 : space.rent[0];
 }
@@ -2275,14 +2787,14 @@ function applyCardEffect(gs, player, card) {
       break;
     case 'advance-to-go':
       player.position = 0;
-      player.money   += GO_MONEY;
-      addLog(gs, `${player.name} idzie na START i otrzymuje ${GO_MONEY} zł.`);
+      player.money   += activeBalanceProfile.goMoney;
+      addLog(gs, `${player.name} idzie na START i otrzymuje ${activeBalanceProfile.goMoney} zł.`);
       gs.phase = 'end-turn';
       return;
     case 'advance-to': {
       if (card.target < player.position) {
-        player.money += GO_MONEY;
-        addLog(gs, `${player.name} przeszedł przez START: +${GO_MONEY} zł.`);
+        player.money += activeBalanceProfile.goMoney;
+        addLog(gs, `${player.name} przeszedł przez START: +${activeBalanceProfile.goMoney} zł.`);
       }
       player.position = card.target;
       handleLanding(gs, player);
@@ -2291,8 +2803,8 @@ function applyCardEffect(gs, player, card) {
     case 'move-forward': {
       const newPos = (player.position + card.steps) % 40;
       if (newPos < player.position) {
-        player.money += GO_MONEY;
-        addLog(gs, `${player.name} przeszedł przez START: +${GO_MONEY} zł.`);
+        player.money += activeBalanceProfile.goMoney;
+        addLog(gs, `${player.name} przeszedł przez START: +${activeBalanceProfile.goMoney} zł.`);
       }
       player.position = newPos;
       handleLanding(gs, player);
@@ -2346,7 +2858,7 @@ function applyCardEffect(gs, player, card) {
 function doBuy(gs) {
   if (!gs.pendingBuy) return;
   const { spaceId } = gs.pendingBuy;
-  const space  = BOARD_SPACES[spaceId];
+  const space  = ACTIVE_BOARD_SPACES[spaceId];
   const player = gs.players[gs.currentPlayerIndex];
 
   if (!space || !player || player.money < space.price) return;
@@ -2374,10 +2886,10 @@ function doPassBuy(gs) {
 function doPayJail(gs) {
   const player = gs.players[gs.currentPlayerIndex];
   if (!player.inJail) return;
-  player.money    -= JAIL_FINE;
+  player.money    -= activeBalanceProfile.jailFine;
   player.inJail    = false;
   player.jailTurns = 0;
-  addLog(gs, `${player.name} zapłacił ${JAIL_FINE} zł i wyszedł z Izolacji.`);
+  addLog(gs, `${player.name} zapłacił ${activeBalanceProfile.jailFine} zł i wyszedł z Izolacji.`);
   playSfx('jail');
   checkBankruptcy(gs, player, null);
   gs.phase = 'rolling';
@@ -2449,10 +2961,103 @@ function doEndTurn(gs) {
 // AI PLAYER LOGIC
 // ============================================================
 
+function getAiPersonalityProfile(player) {
+  const personality = player.aiPersonality || 'balanced';
+  if (personality === 'conservative') {
+    return {
+      key: 'conservative',
+      label: 'zachowawcza',
+      cashBuffer: AI_CASH_BUFFER + 140,
+      minCash: 220,
+      toleranceDrop: 16,
+      burnoutWeight: 17,
+      ethicsWeight: 12,
+      balanceWeight: 1.2,
+    };
+  }
+  if (personality === 'aggressive') {
+    return {
+      key: 'aggressive',
+      label: 'agresywna',
+      cashBuffer: Math.max(120, AI_CASH_BUFFER - 120),
+      minCash: 100,
+      toleranceDrop: 48,
+      burnoutWeight: 12,
+      ethicsWeight: 10,
+      balanceWeight: 0.8,
+    };
+  }
+  return {
+    key: 'balanced',
+    label: 'zbalansowana',
+    cashBuffer: AI_CASH_BUFFER,
+    minCash: 160,
+    toleranceDrop: 28,
+    burnoutWeight: 15,
+    ethicsWeight: 11,
+    balanceWeight: 1.0,
+  };
+}
+
+function getAiBalanceScore(stats) {
+  const values = [stats.prestige, stats.energy, stats.ethics, 100 - stats.burnout];
+  const avg = values.reduce((sum, val) => sum + val, 0) / values.length;
+  const variance = values.reduce((sum, val) => sum + ((val - avg) ** 2), 0) / values.length;
+  // 100 = very balanced, 0 = heavily skewed.
+  return clampStat(100 - Math.sqrt(variance) * 1.6);
+}
+
+function getAiStateScore(player, profile) {
+  const balance = getAiBalanceScore(player);
+  const ethicsDanger = Math.max(0, 30 - player.ethics) * profile.ethicsWeight;
+  const burnoutDanger = Math.max(0, player.burnout - 70) * profile.burnoutWeight;
+  return (
+    player.money +
+    player.prestige * 11 +
+    player.energy * 10 +
+    player.ethics * 12 -
+    player.burnout * 14 +
+    balance * profile.balanceWeight -
+    ethicsDanger -
+    burnoutDanger
+  );
+}
+
+function evaluateAiBuyDecision(player, space) {
+  const profile = getAiPersonalityProfile(player);
+  const projected = {
+    money: player.money - space.price,
+    prestige: player.prestige + 2,
+    energy: clampStat(player.energy - 3),
+    ethics: player.ethics,
+    burnout: clampStat(player.burnout + 2),
+  };
+  const currentScore = getAiStateScore(player, profile);
+  const projectedScore = getAiStateScore(projected, profile);
+  const scoreDelta = Math.round(projectedScore - currentScore);
+
+  if (projected.money < profile.minCash) {
+    return { shouldBuy: false, reason: `${profile.label}: niski bufor gotówki` };
+  }
+  if (projected.burnout >= 92) {
+    return { shouldBuy: false, reason: `${profile.label}: ryzyko krytycznego wypalenia` };
+  }
+  if (projected.ethics <= 12) {
+    return { shouldBuy: false, reason: `${profile.label}: ryzyko załamania etyki` };
+  }
+  if (projectedScore + profile.toleranceDrop < currentScore) {
+    return { shouldBuy: false, reason: `${profile.label}: bilans stats ↓ (${scoreDelta})` };
+  }
+  return { shouldBuy: true, reason: `${profile.label}: bilans stats ↑ (${scoreDelta})` };
+}
+
+function logAiDecision(gs, player, reason) {
+  addLog(gs, `🤖 ${player.name}: ${reason}`, false, 'turn');
+}
+
 /**
  * Schedule an AI step if the current player is an AI.
- * A 900 ms delay lets the human observer see the board state before
- * the AI acts.  The flag `aiStepPending` prevents stacking callbacks.
+ * A stable delay keeps UI pacing predictable and avoids bursty AI input.
  */
 function scheduleAiTurnIfNeeded(gs) {
   if (gameMode !== 'local' || !gs || gs.phase === 'end') return;
@@ -2460,14 +3065,19 @@ function scheduleAiTurnIfNeeded(gs) {
   if (!cur || cur.bankrupt || !cur.isAI) return;
   if (aiStepPending) return;
   aiStepPending = true;
-  setTimeout(() => {
+  if (aiStepTimer) clearTimeout(aiStepTimer);
+  const elapsed = Date.now() - lastAiDecisionAt;
+  const delay = elapsed >= AI_DECISION_DELAY_MS ? AI_DECISION_DELAY_MS : AI_DECISION_DELAY_MS - elapsed;
+  aiStepTimer = setTimeout(() => {
+    aiStepTimer = null;
     aiStepPending = false;
     if (!localGame || localGame.phase === 'end') return;
     const player = localGame.players[localGame.currentPlayerIndex];
     if (!player || !player.isAI) return;
+    lastAiDecisionAt = Date.now();
     aiStep(localGame);
     updateUI(localGame);
-  }, 900);
+  }, delay);
 }
 
 /**
@@ -2481,35 +3091,48 @@ function aiStep(gs) {
     case 'rolling': {
       if (player.inJail) {
         if (player.getOutOfJailCards > 0) {
+          logAiDecision(gs, player, 'używam karty wyjścia z Izolacji');
           doUseJailCard(gs);
-        } else if (player.money >= JAIL_FINE &&
+        } else if (player.money >= activeBalanceProfile.jailFine &&
                    (Math.random() < 0.5 || player.jailTurns >= MAX_JAIL_TURNS - 1)) {
+          logAiDecision(gs, player, 'płacę karę, żeby odzyskać tempo');
           doPayJail(gs);
         } else {
+          logAiDecision(gs, player, 'ryzykuję rzut w Izolacji');
           doRoll(gs);
         }
       } else {
+        logAiDecision(gs, player, 'rzucam kośćmi');
         doRoll(gs);
       }
       break;
     }
     case 'buying': {
       if (gs.pendingBuy) {
-        const space = BOARD_SPACES[gs.pendingBuy.spaceId];
-        // Buy when the player can afford it and keeps a cash buffer of 300 zł.
-        if (space && player.money >= space.price + AI_CASH_BUFFER) {
+        const space = ACTIVE_BOARD_SPACES[gs.pendingBuy.spaceId];
+        if (!space) break;
+        const profile = getAiPersonalityProfile(player);
+        const decision = evaluateAiBuyDecision(player, space);
+        if (player.money >= space.price + profile.cashBuffer && decision.shouldBuy) {
+          logAiDecision(gs, player, `kupuję ${space.name} (${decision.reason})`);
           doBuy(gs);
         } else {
+          const reason = player.money < space.price + profile.cashBuffer
+            ? `${profile.label}: za mały bufor gotówki`
+            : decision.reason;
+          logAiDecision(gs, player, `pomijam ${space.name} (${reason})`);
           doPassBuy(gs);
         }
       }
       break;
     }
     case 'card': {
+      logAiDecision(gs, player, 'akceptuję efekt karty');
       doCardOk(gs);
       break;
     }
     case 'end-turn': {
+      logAiDecision(gs, player, 'kończę turę');
       doEndTurn(gs);
       break;
     }
@@ -2549,7 +3172,7 @@ function checkBankruptcy(gs, player, creditorId) {
   // before declaring the player bankrupt.
   // ============================================================
   player.properties.forEach(spaceId => {
-    const sp = BOARD_SPACES[spaceId];
+    const sp = ACTIVE_BOARD_SPACES[spaceId];
     const ps = gs.properties[spaceId];
     if (!sp || !ps) return;
     while ((ps.houses > 0 || ps.hotel) && player.money < 0) {
@@ -2612,11 +3235,11 @@ function openBuildModal(gs) {
 
   // Find buildable/sellable properties
   player.properties.forEach(spaceId => {
-    const sp = BOARD_SPACES[spaceId];
+    const sp = ACTIVE_BOARD_SPACES[spaceId];
     const ps = gs.properties[spaceId];
     if (!sp || !ps || sp.type !== 'property' || ps.mortgaged) return;
 
-    const groupProps = BOARD_SPACES.filter(s => s.type === 'property' && s.group === sp.group);
+    const groupProps = ACTIVE_BOARD_SPACES.filter(s => s.type === 'property' && s.group === sp.group);
     const ownsAll    = groupProps.every(s => gs.properties[s.id] && gs.properties[s.id].owner === player.id);
     if (!ownsAll) return;
 
@@ -2662,13 +3285,13 @@ function openBuildModal(gs) {
 }
 
 function doBuildHouse(gs, player, spaceId) {
-  const sp = BOARD_SPACES[spaceId];
+  const sp = ACTIVE_BOARD_SPACES[spaceId];
   const ps = gs.properties[spaceId];
   if (!sp || !ps || ps.mortgaged || ps.hotel) return;
   const buildCost = ps.houses >= 4 ? sp.hotelCost : sp.houseCost;
   if (player.money < buildCost) { showToast('Za mało pieniędzy!'); return; }
 
-  const groupProps = BOARD_SPACES.filter(s => s.type === 'property' && s.group === sp.group);
+  const groupProps = ACTIVE_BOARD_SPACES.filter(s => s.type === 'property' && s.group === sp.group);
   const ownsAll    = groupProps.every(s => gs.properties[s.id] && gs.properties[s.id].owner === player.id);
   if (!ownsAll) return;
 
@@ -2697,7 +3320,7 @@ function doBuildHouse(gs, player, spaceId) {
 }
 
 function doSellHouse(gs, player, spaceId) {
-  const sp = BOARD_SPACES[spaceId];
+  const sp = ACTIVE_BOARD_SPACES[spaceId];
   const ps = gs.properties[spaceId];
   if (!sp || !ps) return;
 
@@ -2727,7 +3350,7 @@ function openMortgageModal(gs) {
   list.innerHTML = '';
 
   player.properties.forEach(spaceId => {
-    const sp = BOARD_SPACES[spaceId];
+    const sp = ACTIVE_BOARD_SPACES[spaceId];
     const ps = gs.properties[spaceId];
     if (!sp || !ps) return;
 
@@ -2768,7 +3391,7 @@ function openMortgageModal(gs) {
 }
 
 function doMortgage(gs, player, spaceId) {
-  const sp = BOARD_SPACES[spaceId];
+  const sp = ACTIVE_BOARD_SPACES[spaceId];
   const ps = gs.properties[spaceId];
   if (!sp || !ps || ps.mortgaged || ps.hotel || ps.houses) return;
   player.money += sp.mortgage;
@@ -2779,7 +3402,7 @@ function doMortgage(gs, player, spaceId) {
 }
 
 function doUnmortgage(gs, player, spaceId) {
-  const sp = BOARD_SPACES[spaceId];
+  const sp = ACTIVE_BOARD_SPACES[spaceId];
   const ps = gs.properties[spaceId];
   if (!sp || !ps || !ps.mortgaged) return;
   const cost = Math.floor(sp.mortgage * 1.1);
@@ -2795,10 +3418,24 @@ function doUnmortgage(gs, player, spaceId) {
 // MODALS
 // ============================================================
 function openModal(id) {
-  document.getElementById(id).classList.add('open');
+  const modal = document.getElementById(id);
+  if (!modal) return;
+  modalFocusReturnMap.set(id, document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
+  const firstFocusable = modal.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+  if (firstFocusable instanceof HTMLElement) {
+    firstFocusable.focus();
+  }
 }
 function closeModal(id) {
-  document.getElementById(id).classList.remove('open');
+  const modal = document.getElementById(id);
+  if (!modal) return;
+  modal.classList.remove('open');
+  modal.setAttribute('aria-hidden', 'true');
+  const previousFocus = modalFocusReturnMap.get(id);
+  if (previousFocus instanceof HTMLElement) previousFocus.focus();
+  modalFocusReturnMap.delete(id);
 }
 
 function openCardModal(card, deck) {
@@ -2821,7 +3458,7 @@ function openBuyModal(gs, spaceId) {
   // Don't re-open if already open
   if (document.getElementById('modal-buy').classList.contains('open')) return;
 
-  const space  = BOARD_SPACES[spaceId];
+  const space  = ACTIVE_BOARD_SPACES[spaceId];
   const player = gs.players[gs.currentPlayerIndex];
   if (!space || !player) return;
 
