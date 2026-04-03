@@ -883,7 +883,7 @@ function initSocket() {
     console.log('[socket] connected', socket.id);
     setConnectionStatus('połączono');
     if (currentRoomId && myPlayerName) {
-      showToast('Połączenie przywrócone.');
+      showToast('Połączono ponownie z serwerem. Jeśli byłeś(-aś) w lobby, dołącz ponownie do pokoju.');
     }
   });
 
