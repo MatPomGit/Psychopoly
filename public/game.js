@@ -24,7 +24,7 @@ const STARTING_PRESTIGE = 10;
 const STARTING_ENERGY = 50;
 const STARTING_ETHICS = 50;
 const CRITICAL_BURNOUT = 100;
-const MAX_ROUNDS = 12;
+const DEFAULT_MAX_ROUNDS = 12;
 const AI_CASH_BUFFER = 300;
 const AI_DECISION_DELAY_MS = 850;
 const AI_PERSONALITY_TYPES = ['conservative', 'balanced', 'aggressive'];
@@ -73,6 +73,7 @@ let currentHostPlayerId = 0;
 let socketConnectionStatus = 'reconnecting';
 let boardRendered = false;
 let localSelections = [];
+let lastLocalPlayerConfigs = null;
 const AUDIO_PREFS_KEY = 'psychopoly-audio-prefs-v1';
 const SFX_PRESET_PATH = 'assets/sounds/sfx-presets.json';
 const MUSIC_THEME_PATH = 'assets/music/music-theme.json';
@@ -129,6 +130,7 @@ let gameSettings = { ...(window.PSYCHOPOLY_DEFAULT_CONFIG || {}) };
 let logFilterMode = 'all';
 const BALANCE_PRESETS = window.PSYCHOPOLY_BALANCE_PRESETS || {};
 const DEFAULT_BALANCE_PRESET = (window.PSYCHOPOLY_DEFAULT_CONFIG && window.PSYCHOPOLY_DEFAULT_CONFIG.balancePreset) || "standard";
+const MATCH_MODE_KEYS = ['szybka', 'standard', 'ekspercka'];
 let activeBalanceProfile = null;
 let ACTIVE_BOARD_SPACES = [...BOARD_SPACES];
 let ACTIVE_INSIGHT_CARDS = [...INSIGHT_CARDS];
@@ -161,6 +163,8 @@ const ACHIEVEMENTS = [
   { id: 'turn_veteran', name: 'Weteran tur', description: 'Zakończ łącznie 120 tur.', condition: (ctx) => ctx.profile.stats.turnsEnded >= 120 },
   { id: 'season_pioneer', name: 'Pionier sezonu', description: 'Odblokuj 5 osiągnięć w jednym sezonie.', condition: (ctx) => getSeasonUnlockedCount(ctx.season) >= 5 },
 ];
+let selectedLocalMatchMode = DEFAULT_BALANCE_PRESET;
+let selectedOnlineMatchMode = DEFAULT_BALANCE_PRESET;
 
 const ONBOARDING_STEPS = [
   {
@@ -210,7 +214,7 @@ function roundMoney(value) {
 }
 
 function getBalancePresetKey() {
-  const key = gameSettings.balancePreset || DEFAULT_BALANCE_PRESET;
+  const key = gameSettings.balancePreset === 'strategiczna' ? 'ekspercka' : (gameSettings.balancePreset || DEFAULT_BALANCE_PRESET);
   return BALANCE_PRESETS[key] ? key : DEFAULT_BALANCE_PRESET;
 }
 
@@ -218,6 +222,19 @@ function getBalanceProfile() {
   const standard = BALANCE_PRESETS.standard || {};
   const selected = BALANCE_PRESETS[getBalancePresetKey()] || {};
   return { ...standard, ...selected, name: getBalancePresetKey() };
+}
+
+function getMatchModeKey(preferredKey) {
+  const normalized = preferredKey === 'strategiczna' ? 'ekspercka' : preferredKey;
+  if (MATCH_MODE_KEYS.includes(normalized) && BALANCE_PRESETS[normalized]) return normalized;
+  return MATCH_MODE_KEYS.find((key) => BALANCE_PRESETS[key]) || 'standard';
+}
+
+function getMatchModeProfile(modeKey) {
+  const resolvedKey = getMatchModeKey(modeKey);
+  const standard = BALANCE_PRESETS.standard || {};
+  const selected = BALANCE_PRESETS[resolvedKey] || {};
+  return { ...standard, ...selected, name: resolvedKey };
 }
 
 function withCardMoneyMultiplier(card, multiplier) {
@@ -228,8 +245,10 @@ function withCardMoneyMultiplier(card, multiplier) {
   return next;
 }
 
-function applyBalanceProfileFromSettings() {
-  activeBalanceProfile = getBalanceProfile();
+function applyBalanceProfile(profileOrKey = null) {
+  activeBalanceProfile = typeof profileOrKey === 'string'
+    ? getMatchModeProfile(profileOrKey)
+    : (profileOrKey || getBalanceProfile());
   ACTIVE_BOARD_SPACES = BOARD_SPACES.map((space) => {
     const next = { ...space };
     if (space.type === 'property') {
@@ -434,6 +453,69 @@ function getPrestigeScore(player) {
   return player.money + (player.prestige * 12) + (player.energy * 8) + (player.ethics * 8) - (player.burnout * 10);
 }
 
+function getAssetValue(gs, player) {
+  if (!gs || !player || !Array.isArray(player.properties)) return 0;
+  return player.properties.reduce((sum, spaceId) => {
+    const space = ACTIVE_BOARD_SPACES[spaceId];
+    const ps = gs.properties[spaceId];
+    if (!space) return sum;
+    let value = space.price || 0;
+    if (ps) {
+      value += (ps.houses || 0) * (space.houseCost || 0);
+      if (ps.hotel) value += space.hotelCost || 0;
+      if (ps.mortgaged) value *= 0.5;
+    }
+    return sum + value;
+  }, 0);
+}
+
+function ensureGameAnalytics(gs) {
+  if (!gs) return;
+  if (!gs.analytics) gs.analytics = { snapshots: [], events: [] };
+  if (!Array.isArray(gs.analytics.snapshots)) gs.analytics.snapshots = [];
+  if (!Array.isArray(gs.analytics.events)) gs.analytics.events = [];
+}
+
+function captureRoundSnapshot(gs, note = '') {
+  if (!gs) return;
+  ensureGameAnalytics(gs);
+  const snapshot = {
+    round: gs.roundsCompleted || 0,
+    turn: gs.turn || 0,
+    ts: Date.now(),
+    note,
+    players: gs.players.map((p) => ({
+      id: p.id,
+      name: p.name,
+      money: p.money || 0,
+      prestige: p.prestige || 0,
+      energy: p.energy || 0,
+      ethics: p.ethics || 0,
+      burnout: p.burnout || 0,
+      assetValue: getAssetValue(gs, p),
+      propertyCount: Array.isArray(p.properties) ? p.properties.length : 0,
+      score: getPrestigeScore(p),
+      bankrupt: Boolean(p.bankrupt),
+    })),
+  };
+  gs.analytics.snapshots.push(snapshot);
+}
+
+function recordTurningPoint(gs, { type, playerName, text, impact = 0 } = {}) {
+  if (!gs || !type || !text) return;
+  ensureGameAnalytics(gs);
+  gs.analytics.events.push({
+    type,
+    playerName: playerName || 'Gracz',
+    text,
+    impact,
+    round: gs.roundsCompleted || 0,
+    turn: gs.turn || 0,
+    ts: Date.now(),
+  });
+  if (gs.analytics.events.length > 120) gs.analytics.events.shift();
+}
+
 function applyPlayerDelta(gs, player, delta = {}, reason = '') {
   if (!player || player.bankrupt) return;
   const entries = [
@@ -490,7 +572,7 @@ function loadSettings() {
   } catch (_e) {
     gameSettings = { ...defaults };
   }
-  applyBalanceProfileFromSettings();
+  applyBalanceProfile();
 }
 
 function saveSettings() {
@@ -1016,6 +1098,14 @@ function setupMenuHandlers() {
     showScreen('screen-menu');
   });
   document.getElementById('btn-settings').addEventListener('click', openSettingsModal);
+  document.getElementById('btn-rematch-same-settings').addEventListener('click', () => {
+    if (!Array.isArray(lastLocalPlayerConfigs) || !lastLocalPlayerConfigs.length) {
+      showToast('Brak zapisanych ustawień ostatniej gry lokalnej.');
+      showScreen('screen-local-setup');
+      return;
+    }
+    startLocalGame(lastLocalPlayerConfigs.map((cfg) => ({ ...cfg })));
+  });
   document.getElementById('btn-play-again').addEventListener('click', () => {
     if (socket) socket.disconnect();
     socket = null;
@@ -1067,7 +1157,37 @@ function renderAchievementsScreen() {
 // ============================================================
 let localPlayerCount = 2;
 
+function buildMatchModeDescription(profile) {
+  if (!profile) return '';
+  return `${profile.description || ''} Rundy: ${profile.maxRounds || DEFAULT_MAX_ROUNDS}, ekonomia START ${profile.goMoney} zł, karty ×${(profile.cardIntensity || 1).toFixed(2)}, koszt rozwoju ×${(profile.developmentCostMultiplier || 1).toFixed(2)}.`;
+}
+
+function populateMatchModeSelect(selectId, descId, selectedKey, onChange) {
+  const selectEl = document.getElementById(selectId);
+  const descEl = document.getElementById(descId);
+  if (!selectEl || !descEl) return;
+  selectEl.innerHTML = '';
+  MATCH_MODE_KEYS.forEach((key) => {
+    const profile = getMatchModeProfile(key);
+    const option = document.createElement('option');
+    option.value = key;
+    option.textContent = profile.label || key;
+    selectEl.appendChild(option);
+  });
+  selectEl.value = getMatchModeKey(selectedKey);
+  const updateDescription = () => {
+    const profile = getMatchModeProfile(selectEl.value);
+    descEl.textContent = buildMatchModeDescription(profile);
+    if (typeof onChange === 'function') onChange(selectEl.value, profile);
+  };
+  selectEl.addEventListener('change', updateDescription);
+  updateDescription();
+}
+
 function setupLocalSetupHandlers() {
+  populateMatchModeSelect('local-match-mode', 'local-match-mode-desc', selectedLocalMatchMode, (nextMode) => {
+    selectedLocalMatchMode = nextMode;
+  });
   // Player count buttons
   document.querySelectorAll('.pc-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1106,7 +1226,10 @@ function setupLocalSetupHandlers() {
     document.getElementById('local-error').textContent = errMsg;
     if (errMsg || names.length !== localPlayerCount) return;
 
-    startLocalGame(names.map((n, i) => ({ name: n, color: colors[i], pawn: pawns[i], isAI: aiFlags[i] })));
+    startLocalGame(
+      names.map((n, i) => ({ name: n, color: colors[i], pawn: pawns[i], isAI: aiFlags[i] })),
+      selectedLocalMatchMode,
+    );
   });
 
   // Initial render
@@ -1203,6 +1326,9 @@ function renderPlayerNameInputs(count) {
 // ============================================================
 function setupOnlineLobbyHandlers() {
   renderOnlineSelections();
+  populateMatchModeSelect('online-match-mode', 'online-match-mode-desc', selectedOnlineMatchMode, (nextMode) => {
+    selectedOnlineMatchMode = nextMode;
+  });
 
   document.getElementById('btn-online-back').addEventListener('click', () => {
     showScreen('screen-menu');
@@ -1227,7 +1353,7 @@ function setupOnlineLobbyHandlers() {
   document.getElementById('btn-create-room').addEventListener('click', () => {
     if (!myPlayerName) { showToast('Najpierw wpisz nazwę gracza.'); return; }
     if (!socket) { showToast('Brak połączenia z serwerem online.'); return; }
-    if (socket) socket.emit('create-room', { playerName: myPlayerName, color: myPlayerColor, pawn: myPlayerPawn });
+    if (socket) socket.emit('create-room', { playerName: myPlayerName, color: myPlayerColor, pawn: myPlayerPawn, modeKey: selectedOnlineMatchMode });
   });
 
   document.getElementById('btn-show-join').addEventListener('click', () => {
@@ -1356,7 +1482,13 @@ function resetLobbyUI() {
   lobbyPlayers = [];
   currentHostPlayerId = 0;
   socketConnectionStatus = 'reconnecting';
+  selectedOnlineMatchMode = getMatchModeKey(DEFAULT_BALANCE_PRESET);
   renderOnlineSelections();
+  populateMatchModeSelect('online-match-mode', 'online-match-mode-desc', selectedOnlineMatchMode, (nextMode) => {
+    selectedOnlineMatchMode = nextMode;
+  });
+  const modeSummary = document.getElementById('lobby-match-mode-summary');
+  if (modeSummary) modeSummary.textContent = '';
 }
 
 function setConnectionStatus(status, message) {
@@ -1382,6 +1514,11 @@ function getStartBlockReason(players) {
 }
 
 function refreshLobbyControls() {
+  const matchModeSelect = document.getElementById('online-match-mode');
+  if (matchModeSelect) {
+    const inWaiting = document.getElementById('lobby-step-waiting')?.style.display === 'block';
+    matchModeSelect.disabled = inWaiting;
+  }
   const readyBtn = document.getElementById('btn-lobby-ready');
   if (readyBtn) {
     readyBtn.textContent = myReady ? '✅ Gotowy' : '☐ Gotowy';
@@ -1466,30 +1603,34 @@ function initSocket() {
     showToast('Problem z połączeniem. Trwa ponawianie...');
   });
 
-  socket.on('room-created', ({ roomId, playerId, players }) => {
+  socket.on('room-created', ({ roomId, playerId, players, modeKey }) => {
     currentRoomId = roomId;
     myPlayerId    = playerId;
     isHost        = true;
     myReady       = false;
-    showLobbyWaiting(roomId, players, true);
+    if (modeKey) selectedOnlineMatchMode = getMatchModeKey(modeKey);
+    showLobbyWaiting(roomId, players, true, selectedOnlineMatchMode);
   });
 
-  socket.on('room-joined', ({ roomId, playerId, players }) => {
+  socket.on('room-joined', ({ roomId, playerId, players, modeKey }) => {
     currentRoomId = roomId;
     myPlayerId    = playerId;
     isHost        = false;
     myReady       = false;
-    showLobbyWaiting(roomId, players, false);
+    if (modeKey) selectedOnlineMatchMode = getMatchModeKey(modeKey);
+    showLobbyWaiting(roomId, players, false, selectedOnlineMatchMode);
   });
 
-  socket.on('room-state', ({ roomId, players, hostPlayerId }) => {
+  socket.on('room-state', ({ roomId, players, hostPlayerId, modeKey }) => {
     currentRoomId = roomId;
     currentHostPlayerId = hostPlayerId;
     isHost = hostPlayerId === myPlayerId;
+    if (modeKey) selectedOnlineMatchMode = getMatchModeKey(modeKey);
     const me = players.find(p => p.playerId === myPlayerId);
     myReady = Boolean(me && me.ready);
     renderLobbyPlayers(players);
     refreshLobbyControls();
+    updateLobbyModeSummary(selectedOnlineMatchMode, isHost);
   });
 
   socket.on('game-started', (gs) => {
@@ -1508,7 +1649,7 @@ function initSocket() {
   });
 }
 
-function showLobbyWaiting(roomId, players, host) {
+function showLobbyWaiting(roomId, players, host, modeKey = selectedOnlineMatchMode) {
   document.getElementById('lobby-step-choose').style.display = 'none';
   document.getElementById('lobby-step-waiting').style.display = 'block';
   document.getElementById('lobby-room-code').textContent = roomId;
@@ -1517,10 +1658,18 @@ function showLobbyWaiting(roomId, players, host) {
   isHost = host;
   currentHostPlayerId = host ? myPlayerId : (players.find(p => p.playerId === 0)?.playerId ?? 0);
   renderLobbyPlayers(players);
+  updateLobbyModeSummary(modeKey, host);
   document.getElementById('lobby-status').textContent = host
     ? 'Oczekiwanie na graczy… (min. 2, maks. 4)'
     : 'Oczekiwanie na start gry przez gospodarza…';
   refreshLobbyControls();
+}
+
+function updateLobbyModeSummary(modeKey, host) {
+  const summaryEl = document.getElementById('lobby-match-mode-summary');
+  if (!summaryEl) return;
+  const profile = getMatchModeProfile(modeKey);
+  summaryEl.textContent = `Tryb: ${profile.label}. ${buildMatchModeDescription(profile)}${host ? ' To ustawienie hosta dla całego pokoju.' : ''}`;
 }
 
 function renderLobbyPlayers(players) {
@@ -1546,7 +1695,8 @@ function renderLobbyPlayers(players) {
 // ============================================================
 // GAME CREATION (LOCAL)
 // ============================================================
-function createGameState(playerConfigs) {
+function createGameState(playerConfigs, matchProfile) {
+  const resolvedProfile = matchProfile || activeBalanceProfile || getMatchModeProfile(DEFAULT_BALANCE_PRESET);
   return {
     players: playerConfigs.map((p, i) => ({
       id:                 i,
@@ -1555,7 +1705,7 @@ function createGameState(playerConfigs) {
       pawn:               p.pawn || PAWN_OPTIONS[i % PAWN_OPTIONS.length].id,
       isAI:               p.isAI || false,
       aiPersonality:      p.aiPersonality || (p.isAI ? AI_PERSONALITY_TYPES[i % AI_PERSONALITY_TYPES.length] : null),
-      money:              activeBalanceProfile.startingMoney,
+      money:              resolvedProfile.startingMoney,
       prestige:           STARTING_PRESTIGE,
       energy:             STARTING_ENERGY,
       ethics:             STARTING_ETHICS,
@@ -1575,6 +1725,9 @@ function createGameState(playerConfigs) {
     doubles:         0,
     turn:            0,
     roundsCompleted: 0,
+    maxRounds: resolvedProfile.maxRounds || DEFAULT_MAX_ROUNDS,
+    matchProfileKey: resolvedProfile.name || getMatchModeKey(DEFAULT_BALANCE_PRESET),
+    matchProfileLabel: resolvedProfile.label || 'Standard',
     insightCards:    shuffleArray([...ACTIVE_INSIGHT_CARDS]),
     sessionCards:    shuffleArray([...ACTIVE_SESSION_CARDS]),
     insightDiscard:  [],
@@ -1585,17 +1738,22 @@ function createGameState(playerConfigs) {
     pendingCardDeck: null,
     pendingBuy:      null,
     rolledThisTurn:  false,
+    analytics:       { snapshots: [], events: [] },
   };
 }
 
 // ============================================================
 // START LOCAL GAME
 // ============================================================
-function startLocalGame(playerConfigs) {
+function startLocalGame(playerConfigs, modeKey = DEFAULT_BALANCE_PRESET) {
   gameMode  = 'local';
   myPlayerId = 0;   // in local mode all players use same device
-  applyBalanceProfileFromSettings();
-  localGame  = createGameState(playerConfigs);
+  const profile = getMatchModeProfile(modeKey);
+  selectedLocalMatchMode = profile.name;
+  applyBalanceProfile(profile);
+  localGame  = createGameState(playerConfigs, profile);
+  lastLocalPlayerConfigs = playerConfigs.map((p) => ({ ...p }));
+  captureRoundSnapshot(localGame, 'start');
   currentRunStats = createRunStats();
   endgameMetaRecorded = false;
   aiStepPending = false;
@@ -1612,7 +1770,7 @@ function startLocalGame(playerConfigs) {
   if (drawerInput) drawerInput.disabled = true;
   if (drawerSend)  drawerSend.disabled  = true;
   showScreen('screen-game');
-  showToast(`Preset balansu: ${activeBalanceProfile.label}`);
+  showToast(`Tryb partii: ${profile.label}`);
   addLog(localGame, `--- Tura gracza ${localGame.players[0].name} ---`, true);
   updateUI(localGame);
   window.setTimeout(maybeStartOnboarding, 180);
@@ -1622,6 +1780,8 @@ function startLocalGame(playerConfigs) {
 // START ONLINE GAME
 // ============================================================
 function startOnlineGame(gs) {
+  const profile = getMatchModeProfile(gs && gs.matchProfileKey ? gs.matchProfileKey : selectedOnlineMatchMode);
+  applyBalanceProfile(profile);
   if (!boardRendered) { renderBoard(); boardRendered = true; }
   currentRunStats = createRunStats();
   endgameMetaRecorded = false;
@@ -1861,7 +2021,7 @@ function setupGameHandlers() {
   if (btnSettingsReset) {
     btnSettingsReset.addEventListener('click', () => {
       gameSettings = { ...(window.PSYCHOPOLY_DEFAULT_CONFIG || {}) };
-      applyBalanceProfileFromSettings();
+      applyBalanceProfile();
       applySettings();
       syncSettingsForm();
       saveSettings();
@@ -1879,7 +2039,7 @@ function setupGameHandlers() {
       gameSettings.boardFxIntensity = parseFloat(document.getElementById('setting-fx-intensity').value) || 1;
       gameSettings.balancePreset = document.getElementById('setting-balance-preset').value || DEFAULT_BALANCE_PRESET;
       gameSettings.actionGuidanceEnabled = !!document.getElementById('setting-action-guidance')?.checked;
-      applyBalanceProfileFromSettings();
+      applyBalanceProfile();
       applySettings();
       saveSettings();
       if (!isActionGuidanceEnabled()) clearActionSuggestion();
@@ -3072,6 +3232,12 @@ function doDrawCard(gs, player, deck) {
   }
 
   addLog(gs, `${player.name} ciągnie kartę ${deck === 'insight' ? 'Szansy' : 'Społeczności'}: "${card.text}"`);
+  recordTurningPoint(gs, {
+    type: 'card',
+    playerName: player.name,
+    text: `${player.name} dobrał kartę (${deck === 'insight' ? 'Szansy' : 'Społeczności'}).`,
+    impact: 1,
+  });
   playSfx('card');
   gs.phase       = 'card';
   gs.pendingCard = { card, deck, playerId: player.id };
@@ -3255,6 +3421,14 @@ function doBuy(gs) {
 
   addLog(gs, `${player.name} kupił ${space.name} za ${space.price} zł.`);
   if (metaProgress) metaProgress.stats.totalPropertiesBought++;
+  if (space.price >= 220) {
+    recordTurningPoint(gs, {
+      type: 'investment',
+      playerName: player.name,
+      text: `${player.name} zrobił dużą inwestycję: ${space.name} (${space.price} zł).`,
+      impact: space.price,
+    });
+  }
   showToast(`${player.name} kupił ${space.name}!`);
   playSfx('buy');
   gs.pendingBuy = null;
@@ -3317,6 +3491,7 @@ function doEndTurn(gs) {
   gs.currentPlayerIndex = next;
   if (next === 0) {
     gs.roundsCompleted++;
+    captureRoundSnapshot(gs, `koniec-rundy-${gs.roundsCompleted}`);
   }
   gs.doubles            = 0;
   gs.turn++;
@@ -3330,14 +3505,17 @@ function doEndTurn(gs) {
     gs.phase = 'end';
     if (active[0]) addLog(gs, `🏆 ${active[0].name} wygrywa przez przetrwanie rynku.`);
     playSfx('win');
+    captureRoundSnapshot(gs, 'finał-przetrwanie');
     return;
   }
-  if (gs.roundsCompleted >= MAX_ROUNDS) {
+  const maxRounds = gs.maxRounds || activeBalanceProfile.maxRounds || DEFAULT_MAX_ROUNDS;
+  if (gs.roundsCompleted >= maxRounds) {
     const sorted = [...active].sort((a, b) => getPrestigeScore(b) - getPrestigeScore(a));
     gs.winner = sorted[0].id;
     gs.phase = 'end';
-    addLog(gs, `🏁 Koniec ${MAX_ROUNDS} rund. Wygrywa ${sorted[0].name} bilansem zawodowym.`);
+    addLog(gs, `🏁 Koniec ${maxRounds} rund. Wygrywa ${sorted[0].name} bilansem zawodowym.`);
     playSfx('win');
+    captureRoundSnapshot(gs, 'finał-limit-rund');
     return;
   }
 
@@ -3541,6 +3719,12 @@ function checkPlayerVitalStatus(gs, player) {
   if (player.energy <= 0) addLog(gs, `💥 ${player.name} odpada: energia spadła do zera.`);
   else if (player.ethics <= 0) addLog(gs, `⚠️ ${player.name} odpada: etyka spadła do zera.`);
   else addLog(gs, `🔥 ${player.name} odpada: krytyczne wypalenie.`);
+  recordTurningPoint(gs, {
+    type: 'bankruptcy',
+    playerName: player.name,
+    text: `${player.name} odpada z gry przez krytyczne statystyki.`,
+    impact: -300,
+  });
   showToast(`${player.name} wypada z gry.`);
 }
 
@@ -3587,6 +3771,12 @@ function checkBankruptcy(gs, player, creditorId) {
     if (currentRunStats) currentRunStats.bankruptPlayers.add(player.id);
   }
   addLog(gs, `💀 ${player.name} zbankrutował!`);
+  recordTurningPoint(gs, {
+    type: 'bankruptcy',
+    playerName: player.name,
+    text: `${player.name} zbankrutował i stracił kontrolę nad majątkiem.`,
+    impact: -500,
+  });
   showToast(`${player.name} zbankrutował! 💀`);
   playSfx('bankrupt');
 
@@ -3714,11 +3904,25 @@ function doBuildHouse(gs, player, spaceId) {
     ps.houses = 0;
     ps.hotel  = true;
     addLog(gs, `${player.name} rozwinął pełną specjalizację na ${sp.name}.`);
+    recordTurningPoint(gs, {
+      type: 'investment',
+      playerName: player.name,
+      text: `${player.name} osiągnął pełną specjalizację na ${sp.name} (${buildCost} zł).`,
+      impact: buildCost,
+    });
     showToast(`Pełna specjalizacja na ${sp.name}!`);
     playSfx('build');
   } else {
     ps.houses = (ps.houses || 0) + 1;
     addLog(gs, `${player.name} dokupił certyfikat na ${sp.name} (${ps.houses} domów).`);
+    if (buildCost >= 150) {
+      recordTurningPoint(gs, {
+        type: 'investment',
+        playerName: player.name,
+        text: `${player.name} rozbudował ${sp.name} (+${buildCost} zł inwestycji).`,
+        impact: buildCost,
+      });
+    }
     showToast(`Dodano certyfikat na ${sp.name}!`);
     playSfx('build');
   }
@@ -3922,22 +4126,62 @@ function openBuyModal(gs, spaceId) {
 // GAME OVER
 // ============================================================
 function showGameOver(gs) {
+  ensureGameAnalytics(gs);
+  if (!gs.analytics.snapshots.length) captureRoundSnapshot(gs, 'finał-awaryjny');
   const winner = gs.players[gs.winner];
   document.getElementById('gameover-winner-name').textContent = winner ? winner.name : 'Nieznany';
+  const summary = document.getElementById('gameover-summary');
+  summary.textContent = `Rundy: ${gs.roundsCompleted}/${MAX_ROUNDS} · Tury: ${gs.turn} · Snapshoty: ${gs.analytics.snapshots.length}`;
 
   const final = document.getElementById('gameover-final');
   final.innerHTML = '';
   const sorted = [...gs.players].sort((a, b) => getPrestigeScore(b) - getPrestigeScore(a));
-  sorted.forEach(p => {
+  sorted.forEach((p, idx) => {
     const total = getPrestigeScore(p);
     const div = document.createElement('div');
     div.className = 'gameover-player';
     div.innerHTML = `
       <div class="player-token-sm" style="background:${p.color}; background-image:url('${getPawnIcon(p.pawn)}')">${getInitial(p.name)}</div>
       <div class="gameover-player-name">${escHtml(p.name)}${p.bankrupt ? ' 💀' : ''}</div>
-      <div class="gameover-player-money">${formatMoney(p.money)} · ⭐${p.prestige} · 🔋${p.energy} · ⚖️${p.ethics} · 🔥${p.burnout} · Σ ${total}</div>`;
+      <div class="gameover-player-money">#${idx + 1} · ${formatMoney(p.money)} · ⭐${p.prestige} · 🔋${p.energy} · ⚖️${p.ethics} · 🔥${p.burnout} · Σ ${total}</div>`;
     final.appendChild(div);
   });
+
+  const metricsEl = document.getElementById('gameover-metrics');
+  const [leader, runnerUp] = sorted;
+  const firstSnapshot = gs.analytics.snapshots[0];
+  const lastSnapshot = gs.analytics.snapshots[gs.analytics.snapshots.length - 1];
+  const scoreSwing = leader && firstSnapshot
+    ? (lastSnapshot.players.find((p) => p.id === leader.id)?.score || getPrestigeScore(leader))
+      - (firstSnapshot.players.find((p) => p.id === leader.id)?.score || 0)
+    : 0;
+  const avgBurnout = sorted.length ? Math.round(sorted.reduce((acc, p) => acc + (p.burnout || 0), 0) / sorted.length) : 0;
+  const metricCards = [
+    `🥇 Przewaga lidera: <strong>${leader && runnerUp ? (getPrestigeScore(leader) - getPrestigeScore(runnerUp)) : 0} pkt</strong>`,
+    `💼 Majątek lidera: <strong>${leader ? formatMoney(getAssetValue(gs, leader)) : '0 zł'}</strong>`,
+    `📈 Momentum zwycięzcy: <strong>${scoreSwing >= 0 ? '+' : ''}${scoreSwing} pkt</strong>`,
+    `🔥 Średnie wypalenie: <strong>${avgBurnout}</strong>`,
+    `🏠 Najwięcej własności: <strong>${Math.max(...sorted.map((p) => (p.properties || []).length), 0)}</strong>`,
+  ];
+  metricsEl.innerHTML = metricCards.map((txt) => `<div class="gameover-metric-card">${txt}</div>`).join('');
+
+  const turningPointsEl = document.getElementById('gameover-turning-points');
+  const interestingEvents = [...gs.analytics.events]
+    .sort((a, b) => Math.abs(b.impact || 0) - Math.abs(a.impact || 0))
+    .slice(0, 5);
+  if (!interestingEvents.length) {
+    turningPointsEl.innerHTML = '<h3>Punkty zwrotne</h3><p>Brak wyraźnych zdarzeń krytycznych w tym meczu.</p>';
+  } else {
+    turningPointsEl.innerHTML = `<h3>Punkty zwrotne</h3><ul>${interestingEvents.map((evt) => (
+      `<li><strong>Runda ${evt.round}</strong>: ${escHtml(evt.text)}</li>`
+    )).join('')}</ul>`;
+  }
+
+  const formulaEl = document.getElementById('gameover-formula');
+  formulaEl.innerHTML = `
+    <h3>Jak liczony jest wynik końcowy?</h3>
+    <p><code>Σ = gotówka + (prestiż × 12) + (energia × 8) + (etyka × 8) - (wypalenie × 10)</code></p>
+    <p>W praktyce: zwycięzca to gracz z najwyższym Σ po eliminacjach lub po ${MAX_ROUNDS} rundach.</p>`;
 
   showScreen('screen-game-over');
 }

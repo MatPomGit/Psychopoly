@@ -290,7 +290,8 @@ html, body {
   margin-bottom: 5px;
 }
 .form-group input[type=text],
-.form-group input[type=number] {
+.form-group input[type=number],
+.form-group select {
   width: 100%;
   padding: 9px 12px;
   border: 1px solid rgba(255,255,255,.2);
@@ -1601,9 +1602,39 @@ body.quality-high #board {
   font-size: 2.2rem;
   font-weight: 900;
   color: var(--teal-light);
-  margin-bottom: 32px;
+  margin-bottom: 12px;
 }
-.gameover-final { display: flex; flex-direction: column; gap: 8px; width: 280px; margin-bottom: 32px; }
+.gameover-summary { opacity: .8; margin-bottom: 14px; font-size: .9rem; }
+.gameover-metrics {
+  width: min(880px, 100%);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.gameover-metric-card {
+  background: rgba(255,255,255,.09);
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: .84rem;
+}
+.gameover-turning-points,
+.gameover-formula {
+  width: min(880px, 100%);
+  text-align: left;
+  background: rgba(255,255,255,.08);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  font-size: .84rem;
+}
+.gameover-turning-points h3,
+.gameover-formula h3 { margin: 0 0 8px; font-size: .96rem; }
+.gameover-turning-points ul { margin: 0; padding-left: 20px; }
+.gameover-turning-points li { margin-bottom: 6px; }
+.gameover-formula code { color: var(--teal-light); font-weight: 700; }
+.gameover-final { display: flex; flex-direction: column; gap: 8px; width: min(880px, 100%); margin-bottom: 18px; }
 .gameover-player {
   display: flex;
   align-items: center;
@@ -1615,6 +1646,7 @@ body.quality-high #board {
 .gameover-player .player-token-sm { width: 26px; height: 26px; font-size: 11px; }
 .gameover-player-name { flex: 1; font-weight: 600; }
 .gameover-player-money { color: var(--teal-light); font-weight: 700; }
+#btn-rematch-same-settings { margin-bottom: 10px; }
 
 /* ============================================================
    CHAT (moved to #chat-drawer — see SLIDE-OUT CHAT DRAWER above)
