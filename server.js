@@ -29,7 +29,7 @@ app.get('/', (_req, res) => {
 // IN-MEMORY ROOM STORAGE
 // ============================================================
 // rooms: Map<roomId, roomState>
-// roomState: { id, hostSocketId, players: [{socketId, playerId, name, color, pawn, ready}], gameState, started }
+// roomState: { id, hostSocketId, modeKey, players: [{socketId, playerId, name, color, pawn, ready}], gameState, started }
 const rooms = new Map();
 
 function generateRoomId() {
@@ -37,8 +37,12 @@ function generateRoomId() {
 }
 
 function buildRoomPayload(room) {
+  const mode = getModePreset(room.modeKey);
   return {
     roomId: room.id,
+    modeKey: room.modeKey,
+    modeLabel: mode.label,
+    modeDescription: mode.description,
     hostPlayerId: room.players.find(p => p.socketId === room.hostSocketId)?.playerId ?? 0,
     players: room.players.map(p => ({
       playerId: p.playerId,
@@ -61,9 +65,9 @@ io.on('connection', (socket) => {
   console.log(`[connect] ${socket.id}`);
 
   // ----------------------------------------------------------
-  // create-room: { playerName }
+  // create-room: { playerName, modeKey }
   // ----------------------------------------------------------
-  socket.on('create-room', ({ playerName, color, pawn }) => {
+  socket.on('create-room', ({ playerName, color, pawn, modeKey }) => {
     if (!playerName || typeof playerName !== 'string') {
       socket.emit('error', { message: 'Nieprawidłowa nazwa gracza.' });
       return;
@@ -79,6 +83,7 @@ io.on('connection', (socket) => {
     const roomState = {
       id: roomId,
       hostSocketId: socket.id,
+      modeKey: sanitizeModeKey(modeKey),
       players: [{ socketId: socket.id, playerId, name: profile.name, color: profile.color, pawn: profile.pawn, ready: false }],
       gameState: null,
       started: false,
@@ -93,6 +98,7 @@ io.on('connection', (socket) => {
     socket.emit('room-created', {
       roomId,
       playerId,
+      modeKey: roomState.modeKey,
       players: roomState.players.map(p => ({ playerId: p.playerId, name: p.name, color: p.color, pawn: p.pawn, ready: p.ready })),
     });
     emitRoomState(roomState);
@@ -146,7 +152,7 @@ io.on('connection', (socket) => {
     socket.data.playerName = profile.name;
 
     const playerList = room.players.map(p => ({ playerId: p.playerId, name: p.name, color: p.color, pawn: p.pawn, ready: p.ready }));
-    socket.emit('room-joined', { roomId, playerId, players: playerList });
+    socket.emit('room-joined', { roomId, playerId, modeKey: room.modeKey, players: playerList });
     emitRoomState(room);
     console.log(`[join-room] ${profile.name} joined ${roomId} as player ${playerId}`);
   });
@@ -185,7 +191,7 @@ io.on('connection', (socket) => {
       return;
     }
     room.started = true;
-    room.gameState = createServerGameState(room.players.map(p => ({ name: p.name, color: p.color, pawn: p.pawn })));
+    room.gameState = createServerGameState(room.players.map(p => ({ name: p.name, color: p.color, pawn: p.pawn })), room.modeKey);
     io.to(roomId).emit('game-started', sanitizeState(room.gameState));
     console.log(`[start-game] Room ${roomId} started with ${room.players.length} players`);
   });
@@ -393,11 +399,67 @@ const SESSION_CARDS_SERVER = [
 const PLAYER_COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12'];
 const AVAILABLE_COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#f1c40f', '#1abc9c', '#ffffff'];
 const PAWN_IDS = ['brain', 'lamp', 'rocket', 'star', 'puzzle', 'book'];
-const STARTING_MONEY = 1500;
-const GO_MONEY = 200;
 const JAIL_POSITION = 10;
-const JAIL_FINE = 50;
 const MAX_JAIL_TURNS = 3;
+const DEFAULT_MODE_KEY = 'standard';
+const GAME_MODE_PRESETS = {
+  szybka: {
+    key: 'szybka',
+    label: 'Szybka',
+    description: 'Krótka partia z dynamiczną ekonomią i częstszymi zwrotami kart.',
+    maxRounds: 8,
+    startingMoney: 1200,
+    goMoney: 160,
+    jailFine: 80,
+    developmentCostMultiplier: 0.8,
+    penaltyMultiplier: 1.2,
+    cardMoneyMultiplier: 1.15,
+    cardIntensity: 1.2,
+  },
+  standard: {
+    key: 'standard',
+    label: 'Standard',
+    description: 'Zbalansowany przebieg gry z klasycznym tempem i ekonomią.',
+    maxRounds: 12,
+    startingMoney: 1500,
+    goMoney: 200,
+    jailFine: 60,
+    developmentCostMultiplier: 0.95,
+    penaltyMultiplier: 1,
+    cardMoneyMultiplier: 1,
+    cardIntensity: 1,
+  },
+  ekspercka: {
+    key: 'ekspercka',
+    label: 'Ekspercka',
+    description: 'Dłuższa i bardziej wymagająca partia z droższym rozwojem.',
+    maxRounds: 16,
+    startingMoney: 1750,
+    goMoney: 180,
+    jailFine: 100,
+    developmentCostMultiplier: 1.15,
+    penaltyMultiplier: 1.1,
+    cardMoneyMultiplier: 0.9,
+    cardIntensity: 0.85,
+  },
+};
+
+function sanitizeModeKey(modeKey) {
+  if (modeKey === 'strategiczna') return 'ekspercka';
+  return GAME_MODE_PRESETS[modeKey] ? modeKey : DEFAULT_MODE_KEY;
+}
+
+function getModePreset(modeKey) {
+  return GAME_MODE_PRESETS[sanitizeModeKey(modeKey)] || GAME_MODE_PRESETS[DEFAULT_MODE_KEY];
+}
+
+function withCardMoneyMultiplier(card, multiplier) {
+  const next = { ...card };
+  ['amount', 'perHouse', 'perHotel'].forEach((field) => {
+    if (typeof next[field] === 'number') next[field] = Math.round(next[field] * multiplier);
+  });
+  return next;
+}
 
 function sanitizePlayerProfile({ playerName, color, pawn }, fallbackIndex = 0) {
   const name = String(playerName || '').trim().slice(0, 20);
@@ -406,14 +468,35 @@ function sanitizePlayerProfile({ playerName, color, pawn }, fallbackIndex = 0) {
   return { name, color: safeColor, pawn: safePawn };
 }
 
-function createServerGameState(playerConfigs) {
+function createServerGameState(playerConfigs, modeKey = DEFAULT_MODE_KEY) {
+  const mode = getModePreset(modeKey);
+  const boardSpaces = BOARD_SPACES_SERVER.map((space) => {
+    const next = { ...space };
+    if (next.type === 'property') {
+      next.houseCost = Math.round(next.houseCost * mode.developmentCostMultiplier);
+      next.hotelCost = Math.round(next.hotelCost * mode.developmentCostMultiplier);
+    }
+    if (next.type === 'tax' && typeof next.amount === 'number') {
+      next.amount = Math.round(next.amount * mode.penaltyMultiplier);
+    }
+    return next;
+  });
+  const insightCards = INSIGHT_CARDS_SERVER.map((card) => withCardMoneyMultiplier(card, mode.cardMoneyMultiplier));
+  const sessionCards = SESSION_CARDS_SERVER.map((card) => withCardMoneyMultiplier(card, mode.cardMoneyMultiplier));
   return {
+    matchProfileKey: mode.key,
+    matchProfileLabel: mode.label,
+    maxRounds: mode.maxRounds,
+    roundsCompleted: 0,
+    goMoney: mode.goMoney,
+    jailFine: mode.jailFine,
+    boardSpaces,
     players: playerConfigs.map((p, i) => ({
       id: i,
       name: p.name,
       color: p.color || PLAYER_COLORS[i],
       pawn: p.pawn || PAWN_IDS[i % PAWN_IDS.length],
-      money: STARTING_MONEY,
+      money: mode.startingMoney,
       position: 0,
       inJail: false,
       jailTurns: 0,
@@ -428,8 +511,8 @@ function createServerGameState(playerConfigs) {
     dice: [0, 0],
     doubles: 0,
     turn: 0,
-    insightCards: shuffleArray([...INSIGHT_CARDS_SERVER]),
-    sessionCards: shuffleArray([...SESSION_CARDS_SERVER]),
+    insightCards: shuffleArray([...insightCards]),
+    sessionCards: shuffleArray([...sessionCards]),
     insightDiscard: [],
     sessionDiscard: [],
     log: [],
@@ -490,10 +573,10 @@ function handleRoll(gs, player) {
     } else {
       player.jailTurns++;
       if (player.jailTurns >= MAX_JAIL_TURNS) {
-        player.money -= JAIL_FINE;
+        player.money -= gs.jailFine;
         player.inJail = false;
         player.jailTurns = 0;
-        addLog(gs, `${player.name} zapłacił karę ${JAIL_FINE} zł i wyszedł z Izolacji.`);
+        addLog(gs, `${player.name} zapłacił karę ${gs.jailFine} zł i wyszedł z Izolacji.`);
         checkBankruptcy(gs, player, null);
         doMove(gs, player, d1 + d2);
       } else {
@@ -523,16 +606,16 @@ function doMove(gs, player, steps) {
   const oldPos = player.position;
   const newPos = (player.position + steps) % 40;
   if (newPos < oldPos) { // wrapped around GO
-    player.money += GO_MONEY;
-    addLog(gs, `${player.name} przeszedł przez START i otrzymał ${GO_MONEY} zł.`);
+    player.money += gs.goMoney;
+    addLog(gs, `${player.name} przeszedł przez START i otrzymał ${gs.goMoney} zł.`);
   }
   player.position = newPos;
-  addLog(gs, `${player.name} wylądował na polu ${newPos} (${BOARD_SPACES_SERVER[newPos] ? BOARD_SPACES_SERVER[newPos].type : ''}).`);
+  addLog(gs, `${player.name} wylądował na polu ${newPos} (${gs.boardSpaces[newPos] ? gs.boardSpaces[newPos].type : ''}).`);
   handleLanding(gs, player);
 }
 
 function handleLanding(gs, player) {
-  const space = BOARD_SPACES_SERVER[player.position];
+  const space = gs.boardSpaces[player.position];
   if (!space) { gs.phase = 'end-turn'; return; }
 
   switch (space.type) {
@@ -599,13 +682,13 @@ function handlePropertyLanding(gs, player, space) {
 
 function calculateRent(gs, space, propState) {
   if (space.type === 'railroad') {
-    const owned = BOARD_SPACES_SERVER
+    const owned = gs.boardSpaces
       .filter(s => s.type === 'railroad' && gs.properties[s.id] && gs.properties[s.id].owner === propState.owner)
       .length;
     return 25 * Math.pow(2, owned - 1);
   }
   if (space.type === 'utility') {
-    const owned = BOARD_SPACES_SERVER
+    const owned = gs.boardSpaces
       .filter(s => s.type === 'utility' && gs.properties[s.id] && gs.properties[s.id].owner === propState.owner)
       .length;
     const diceTotal = gs.dice[0] + gs.dice[1];
@@ -613,7 +696,7 @@ function calculateRent(gs, space, propState) {
   }
   if (propState.hotel) return space.rent[5];
   if (propState.houses > 0) return space.rent[Math.min(propState.houses, 4)];
-  const groupProps = BOARD_SPACES_SERVER.filter(s => s.type === 'property' && s.group === space.group);
+  const groupProps = gs.boardSpaces.filter(s => s.type === 'property' && s.group === space.group);
   const ownsAll = groupProps.every(s => gs.properties[s.id] && gs.properties[s.id].owner === propState.owner);
   return ownsAll ? space.rent[0] * 2 : space.rent[0];
 }
@@ -657,13 +740,13 @@ function applyCard(gs, player, card) {
       break;
     case 'advance-to-go':
       player.position = 0;
-      player.money += GO_MONEY;
-      addLog(gs, `${player.name} idzie na START i otrzymuje ${GO_MONEY} zł.`);
+      player.money += gs.goMoney;
+      addLog(gs, `${player.name} idzie na START i otrzymuje ${gs.goMoney} zł.`);
       break;
     case 'advance-to':
       if (card.target < player.position) {
-        player.money += GO_MONEY;
-        addLog(gs, `${player.name} przeszedł przez START i otrzymał ${GO_MONEY} zł.`);
+        player.money += gs.goMoney;
+        addLog(gs, `${player.name} przeszedł przez START i otrzymał ${gs.goMoney} zł.`);
       }
       player.position = card.target;
       handleLanding(gs, player);
@@ -671,8 +754,8 @@ function applyCard(gs, player, card) {
     case 'move-forward': {
       const newPos = (player.position + card.steps) % 40;
       if (newPos < player.position) {
-        player.money += GO_MONEY;
-        addLog(gs, `${player.name} przeszedł przez START i otrzymał ${GO_MONEY} zł.`);
+        player.money += gs.goMoney;
+        addLog(gs, `${player.name} przeszedł przez START i otrzymał ${gs.goMoney} zł.`);
       }
       player.position = newPos;
       handleLanding(gs, player);
@@ -717,7 +800,7 @@ function applyCard(gs, player, card) {
 function handleBuy(gs, player) {
   if (gs.phase !== 'buying' || !gs.pendingBuy) return;
   const { spaceId } = gs.pendingBuy;
-  const space = BOARD_SPACES_SERVER[spaceId];
+  const space = gs.boardSpaces[spaceId];
   if (!space || player.money < space.price) return;
 
   player.money -= space.price;
@@ -737,10 +820,10 @@ function handlePassBuy(gs, player) {
 
 function handlePayJail(gs, player) {
   if (!player.inJail) return;
-  player.money -= JAIL_FINE;
+  player.money -= gs.jailFine;
   player.inJail = false;
   player.jailTurns = 0;
-  addLog(gs, `${player.name} zapłacił ${JAIL_FINE} zł i wyszedł z Izolacji.`);
+  addLog(gs, `${player.name} zapłacił ${gs.jailFine} zł i wyszedł z Izolacji.`);
   checkBankruptcy(gs, player, null);
   gs.phase = 'rolling';
 }
@@ -771,20 +854,36 @@ function handleEndTurn(gs) {
     loops++;
   }
   gs.currentPlayerIndex = next;
+  if (next === 0) gs.roundsCompleted++;
   gs.doubles = 0;
   gs.turn++;
   gs.phase = 'rolling';
   gs.rolledThisTurn = false;
+
+  const active = gs.players.filter(p => !p.bankrupt);
+  if (active.length <= 1) {
+    gs.winner = active[0] ? active[0].id : null;
+    gs.phase = 'end';
+    if (active[0]) addLog(gs, `🏆 ${active[0].name} wygrał grę!`);
+    return;
+  }
+  if (gs.roundsCompleted >= (gs.maxRounds || 12)) {
+    const sorted = [...active].sort((a, b) => b.money - a.money);
+    gs.winner = sorted[0].id;
+    gs.phase = 'end';
+    addLog(gs, `🏁 Koniec ${gs.maxRounds} rund. Wygrywa ${sorted[0].name}.`);
+    return;
+  }
   addLog(gs, `--- Tura gracza ${gs.players[next].name} ---`);
 }
 
 function handleBuildHouse(gs, player, spaceId) {
-  const space = BOARD_SPACES_SERVER[spaceId];
+  const space = gs.boardSpaces[spaceId];
   if (!space || space.type !== 'property') return;
   const propState = gs.properties[spaceId];
   if (!propState || propState.owner !== player.id || propState.mortgaged) return;
 
-  const groupProps = BOARD_SPACES_SERVER.filter(s => s.type === 'property' && s.group === space.group);
+  const groupProps = gs.boardSpaces.filter(s => s.type === 'property' && s.group === space.group);
   const ownsAll = groupProps.every(s => gs.properties[s.id] && gs.properties[s.id].owner === player.id);
   if (!ownsAll) return;
 
@@ -808,7 +907,7 @@ function handleBuildHouse(gs, player, spaceId) {
 }
 
 function handleSellHouse(gs, player, spaceId) {
-  const space = BOARD_SPACES_SERVER[spaceId];
+  const space = gs.boardSpaces[spaceId];
   if (!space) return;
   const propState = gs.properties[spaceId];
   if (!propState || propState.owner !== player.id) return;
@@ -827,7 +926,7 @@ function handleSellHouse(gs, player, spaceId) {
 }
 
 function handleMortgage(gs, player, spaceId) {
-  const space = BOARD_SPACES_SERVER[spaceId];
+  const space = gs.boardSpaces[spaceId];
   if (!space) return;
   const propState = gs.properties[spaceId];
   if (!propState || propState.owner !== player.id || propState.mortgaged) return;
@@ -839,7 +938,7 @@ function handleMortgage(gs, player, spaceId) {
 }
 
 function handleUnmortgage(gs, player, spaceId) {
-  const space = BOARD_SPACES_SERVER[spaceId];
+  const space = gs.boardSpaces[spaceId];
   if (!space) return;
   const propState = gs.properties[spaceId];
   if (!propState || propState.owner !== player.id || !propState.mortgaged) return;
@@ -862,7 +961,7 @@ function checkBankruptcy(gs, player, creditorId) {
   if (player.money >= 0) return;
   // Try to raise funds by selling houses first (simple auto-liquidation)
   player.properties.forEach(spaceId => {
-    const space = BOARD_SPACES_SERVER[spaceId];
+    const space = gs.boardSpaces[spaceId];
     const ps = gs.properties[spaceId];
     if (!ps || !space) return;
     while ((ps.houses > 0 || ps.hotel) && player.money < 0) {

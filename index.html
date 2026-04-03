@@ -57,6 +57,11 @@
 
     <div id="player-names-list"></div>
     <p class="setup-help">Każdy gracz wybiera własne imię, pionek i kolor.</p>
+    <div class="form-group">
+      <label for="local-match-mode">Tryb partii</label>
+      <select id="local-match-mode"></select>
+      <p id="local-match-mode-desc" class="setup-help"></p>
+    </div>
 
     <div id="local-error" class="error-msg" role="alert" aria-live="assertive"></div>
 
@@ -89,6 +94,11 @@
         <div id="online-color-list" class="color-select-list"></div>
       </div>
       <div id="online-preview" class="online-preview-row"></div>
+      <div class="form-group">
+        <label for="online-match-mode">Tryb partii</label>
+        <select id="online-match-mode"></select>
+        <p id="online-match-mode-desc" class="setup-help"></p>
+      </div>
       <div class="setup-actions">
         <button id="btn-online-back" class="btn btn-outline">← Wstecz</button>
         <button id="btn-online-next" class="btn btn-primary">Dalej →</button>
@@ -120,6 +130,7 @@
       <div id="lobby-copy-confirmation" class="setup-help" style="display:none; margin-top:8px;">Skopiowano kod pokoju.</div>
       <div id="lobby-connection-status" class="setup-help">Status: reconnecting</div>
       <div id="lobby-status" role="status" aria-live="polite">Oczekiwanie na graczy…</div>
+      <div id="lobby-match-mode-summary" class="setup-help"></div>
       <div id="lobby-ready-count" class="setup-help">Gotowi: 0/0</div>
       <div id="lobby-players-list"></div>
       <p class="setup-help">Host uruchomi grę, gdy wszyscy gracze będą gotowi.</p>
@@ -400,7 +411,7 @@
         <select id="setting-balance-preset">
           <option value="szybka">Szybka</option>
           <option value="standard">Standard</option>
-          <option value="strategiczna">Strategiczna</option>
+          <option value="ekspercka">Ekspercka</option>
         </select>
         <p class="settings-help">Wpływa na startowy kapitał, bonus START, koszty rozwoju i kary.</p>
       </div>

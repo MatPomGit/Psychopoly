@@ -248,7 +248,8 @@ html, body {
   margin-bottom: 5px;
 }
 .form-group input[type=text],
-.form-group input[type=number] {
+.form-group input[type=number],
+.form-group select {
   width: 100%;
   padding: 9px 12px;
   border: 1px solid rgba(255,255,255,.2);
