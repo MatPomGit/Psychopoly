@@ -63,6 +63,10 @@ let myPlayerColor = PLAYER_COLORS[0];
 let myPlayerPawn = PAWN_OPTIONS[0].id;
 let currentRoomId = null;
 let isHost        = false;
+let myReady       = false;
+let lobbyPlayers  = [];
+let currentHostPlayerId = 0;
+let socketConnectionStatus = 'reconnecting';
 let boardRendered = false;
 let localSelections = [];
 const AUDIO_PREFS_KEY = 'psychopoly-audio-prefs-v1';
@@ -916,10 +920,36 @@ function setupOnlineLobbyHandlers() {
     showScreen('screen-menu');
   });
 
+  document.getElementById('btn-lobby-ready').addEventListener('click', () => {
+    if (!socket || socketConnectionStatus !== 'połączono') {
+      showToast('Brak połączenia z serwerem online.');
+      return;
+    }
+    socket.emit('set-ready', { ready: !myReady });
+  });
+
   document.getElementById('btn-lobby-start').addEventListener('click', () => {
     if (!isHost) { showToast('Tylko host może rozpocząć grę.'); return; }
     if (!socket) { showToast('Brak połączenia z serwerem online.'); return; }
-    if (socket) socket.emit('start-game');
+    const reason = getStartBlockReason(lobbyPlayers);
+    if (reason) { showToast(reason); return; }
+    socket.emit('start-game');
+  });
+
+  document.getElementById('btn-copy-room-code').addEventListener('click', async () => {
+    const code = (document.getElementById('lobby-room-code').textContent || '').trim();
+    if (!code) return;
+    const confirmation = document.getElementById('lobby-copy-confirmation');
+    try {
+      await navigator.clipboard.writeText(code);
+      confirmation.textContent = 'Skopiowano kod pokoju.';
+      confirmation.style.display = 'block';
+      showToast('Kod pokoju skopiowany.');
+    } catch (_err) {
+      confirmation.textContent = 'Nie udało się skopiować kodu. Skopiuj ręcznie.';
+      confirmation.style.display = 'block';
+      showToast('Nie udało się skopiować kodu.');
+    }
   });
 }
 
@@ -977,10 +1007,69 @@ function resetLobbyUI() {
   document.getElementById('lobby-step-waiting').style.display = 'none';
   document.getElementById('online-player-name').value = '';
   document.getElementById('online-error').textContent = '';
+  document.getElementById('lobby-copy-confirmation').style.display = 'none';
+  document.getElementById('lobby-start-block-reason').textContent = '';
+  document.getElementById('lobby-connection-status').textContent = 'Status: reconnecting';
+  document.getElementById('lobby-ready-count').textContent = 'Gotowi: 0/0';
   myPlayerName = '';
   myPlayerColor = AVAILABLE_COLORS[0];
   myPlayerPawn = PAWN_OPTIONS[0].id;
+  currentRoomId = null;
+  myPlayerId = null;
+  isHost = false;
+  myReady = false;
+  lobbyPlayers = [];
+  currentHostPlayerId = 0;
+  socketConnectionStatus = 'reconnecting';
   renderOnlineSelections();
+}
+
+function setConnectionStatus(status, message) {
+  socketConnectionStatus = status;
+  const el = document.getElementById('lobby-connection-status');
+  if (el) {
+    const base = `Status: ${status}`;
+    el.textContent = message ? `${base} — ${message}` : base;
+  }
+  refreshLobbyControls();
+}
+
+function getStartBlockReason(players) {
+  if (!Array.isArray(players) || players.length < 2) {
+    return 'Start zablokowany: potrzeba co najmniej 2 graczy.';
+  }
+  const notReady = players.filter(p => !p.ready);
+  if (notReady.length > 0) {
+    const names = notReady.map(p => p.name).join(', ');
+    return `Start zablokowany: czekamy na gotowość (${names}).`;
+  }
+  return '';
+}
+
+function refreshLobbyControls() {
+  const readyBtn = document.getElementById('btn-lobby-ready');
+  if (readyBtn) {
+    readyBtn.textContent = myReady ? '✅ Gotowy' : '☐ Gotowy';
+    readyBtn.classList.toggle('btn-success', myReady);
+    readyBtn.classList.toggle('btn-secondary', !myReady);
+    readyBtn.disabled = !socket || socketConnectionStatus !== 'połączono';
+  }
+  const readyCount = lobbyPlayers.filter(p => p.ready).length;
+  const readyCountEl = document.getElementById('lobby-ready-count');
+  if (readyCountEl) {
+    readyCountEl.textContent = `Gotowi: ${readyCount}/${lobbyPlayers.length}`;
+  }
+
+  const startBtn = document.getElementById('btn-lobby-start');
+  const reason = getStartBlockReason(lobbyPlayers);
+  if (startBtn) {
+    startBtn.style.display = isHost ? 'inline-flex' : 'none';
+    startBtn.disabled = Boolean(reason) || !socket || socketConnectionStatus !== 'połączono';
+  }
+  const reasonEl = document.getElementById('lobby-start-block-reason');
+  if (reasonEl) {
+    reasonEl.textContent = isHost ? (reason || 'Możesz rozpocząć grę.') : '';
+  }
 }
 
 // ============================================================
@@ -992,14 +1081,29 @@ function initSocket() {
     showToast('Tryb online jest niedostępny bez serwera Socket.io.');
     return;
   }
-  socket = io();
+  socket = io({
+    timeout: 8000,
+    reconnection: true,
+    reconnectionAttempts: 6,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 4000,
+  });
 
   socket.on('connect', () => {
     console.log('[socket] connected', socket.id);
+    setConnectionStatus('połączono');
+    if (currentRoomId && myPlayerName) {
+      showToast('Połączono ponownie z serwerem. Jeśli byłeś(-aś) w lobby, dołącz ponownie do pokoju.');
+    }
   });
 
-  socket.on('disconnect', () => {
-    showToast('Rozłączono z serwerem.');
+  socket.on('disconnect', (reason) => {
+    if (reason === 'io client disconnect') {
+      setConnectionStatus('rozłączono', `rozłączono (${reason})`);
+      return;
+    }
+    setConnectionStatus('reconnecting', `rozłączono (${reason || 'brak powodu'})`);
+    showToast('Rozłączono z serwerem. Trwa ponowne łączenie…');
   });
 
   socket.on('error', ({ message }) => {
@@ -1007,10 +1111,31 @@ function initSocket() {
     showToast('Błąd: ' + message);
   });
 
+  socket.io.on('reconnect_attempt', (attempt) => {
+    setConnectionStatus('reconnecting', `próba ${attempt}/6`);
+  });
+
+  socket.io.on('reconnect_error', () => {
+    setConnectionStatus('reconnecting', 'błąd podczas ponownego łączenia');
+  });
+
+  socket.io.on('reconnect_failed', () => {
+    setConnectionStatus('reconnecting', 'nie udało się połączyć ponownie');
+    showToast('Nie udało się odzyskać połączenia. Spróbuj wrócić do menu i wejść ponownie.');
+  });
+
+  socket.on('connect_error', (err) => {
+    const msg = err?.message || 'timeout połączenia';
+    document.getElementById('online-error').textContent = `Problem z połączeniem: ${msg}.`;
+    setConnectionStatus('reconnecting', msg);
+    showToast('Problem z połączeniem. Trwa ponawianie...');
+  });
+
   socket.on('room-created', ({ roomId, playerId, players }) => {
     currentRoomId = roomId;
     myPlayerId    = playerId;
     isHost        = true;
+    myReady       = false;
     showLobbyWaiting(roomId, players, true);
   });
 
@@ -1018,11 +1143,18 @@ function initSocket() {
     currentRoomId = roomId;
     myPlayerId    = playerId;
     isHost        = false;
+    myReady       = false;
     showLobbyWaiting(roomId, players, false);
   });
 
-  socket.on('player-joined', ({ players }) => {
+  socket.on('room-state', ({ roomId, players, hostPlayerId }) => {
+    currentRoomId = roomId;
+    currentHostPlayerId = hostPlayerId;
+    isHost = hostPlayerId === myPlayerId;
+    const me = players.find(p => p.playerId === myPlayerId);
+    myReady = Boolean(me && me.ready);
     renderLobbyPlayers(players);
+    refreshLobbyControls();
   });
 
   socket.on('game-started', (gs) => {
@@ -1045,22 +1177,33 @@ function showLobbyWaiting(roomId, players, host) {
   document.getElementById('lobby-step-choose').style.display = 'none';
   document.getElementById('lobby-step-waiting').style.display = 'block';
   document.getElementById('lobby-room-code').textContent = roomId;
+  document.getElementById('lobby-copy-confirmation').style.display = 'none';
+  setConnectionStatus(socket && socket.connected ? 'połączono' : 'reconnecting');
+  isHost = host;
+  currentHostPlayerId = host ? myPlayerId : (players.find(p => p.playerId === 0)?.playerId ?? 0);
   renderLobbyPlayers(players);
-  document.getElementById('btn-lobby-start').style.display = host ? 'inline-flex' : 'none';
   document.getElementById('lobby-status').textContent = host
     ? 'Oczekiwanie na graczy… (min. 2, maks. 4)'
     : 'Oczekiwanie na start gry przez gospodarza…';
+  refreshLobbyControls();
 }
 
 function renderLobbyPlayers(players) {
+  lobbyPlayers = Array.isArray(players) ? players : [];
   const list = document.getElementById('lobby-players-list');
   list.innerHTML = '';
-  players.forEach(p => {
+  lobbyPlayers.forEach(p => {
     const row = document.createElement('div');
     row.className = 'lobby-player-row';
+    const badges = [
+      `<span class="lobby-badge lobby-badge-conn">${socketConnectionStatus}</span>`,
+      p.playerId === currentHostPlayerId ? '<span class="lobby-badge lobby-badge-host">host</span>' : '',
+      p.ready ? '<span class="lobby-badge lobby-badge-ready">gotowy</span>' : '',
+    ].filter(Boolean).join('');
     row.innerHTML = `
       <div class="player-token-sm" style="background:${p.color}; background-image:url('${getPawnIcon(p.pawn)}')">${getInitial(p.name)}</div>
-      <span>${p.name}${p.playerId === myPlayerId ? ' (Ty)' : ''}</span>`;
+      <span>${p.name}${p.playerId === myPlayerId ? ' (Ty)' : ''}</span>
+      <span class="lobby-player-badges">${badges}</span>`;
     list.appendChild(row);
   });
 }

@@ -97,15 +97,23 @@
 
     <!-- Step 3: waiting room -->
     <div id="lobby-step-waiting" style="display:none">
-      <div id="lobby-room-code"></div>
+      <div id="lobby-room-code-wrap">
+        <div id="lobby-room-code"></div>
+        <button id="btn-copy-room-code" class="btn btn-outline btn-sm">Kopiuj kod</button>
+      </div>
+      <div id="lobby-copy-confirmation" class="setup-help" style="display:none; margin-top:8px;">Skopiowano kod pokoju.</div>
+      <div id="lobby-connection-status" class="setup-help">Status: reconnecting</div>
       <div id="lobby-status" role="status" aria-live="polite">Oczekiwanie na graczy…</div>
+      <div id="lobby-ready-count" class="setup-help">Gotowi: 0/0</div>
       <div id="lobby-players-list"></div>
       <p class="setup-help">Host uruchomi grę, gdy wszyscy gracze będą gotowi.</p>
       <div id="online-error" class="error-msg" role="alert" aria-live="assertive"></div>
       <div class="setup-actions">
+        <button id="btn-lobby-ready" class="btn btn-secondary btn-sm">☐ Gotowy</button>
         <button id="btn-lobby-leave" class="btn btn-danger btn-sm">Opuść pokój</button>
         <button id="btn-lobby-start" class="btn btn-success" style="display:none">▶ Rozpocznij grę</button>
       </div>
+      <div id="lobby-start-block-reason" class="setup-help" style="margin-top:10px;"></div>
     </div>
   </div>
 </div>

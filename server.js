@@ -29,11 +29,29 @@ app.get('/', (_req, res) => {
 // IN-MEMORY ROOM STORAGE
 // ============================================================
 // rooms: Map<roomId, roomState>
-// roomState: { id, hostSocketId, players: [{socketId, playerId, name, color, pawn}], gameState, started }
+// roomState: { id, hostSocketId, players: [{socketId, playerId, name, color, pawn, ready}], gameState, started }
 const rooms = new Map();
 
 function generateRoomId() {
   return crypto.randomBytes(3).toString('hex').toUpperCase();
+}
+
+function buildRoomPayload(room) {
+  return {
+    roomId: room.id,
+    hostPlayerId: room.players.find(p => p.socketId === room.hostSocketId)?.playerId ?? 0,
+    players: room.players.map(p => ({
+      playerId: p.playerId,
+      name: p.name,
+      color: p.color,
+      pawn: p.pawn,
+      ready: Boolean(p.ready),
+    })),
+  };
+}
+
+function emitRoomState(room) {
+  io.to(room.id).emit('room-state', buildRoomPayload(room));
 }
 
 // ============================================================
@@ -61,7 +79,7 @@ io.on('connection', (socket) => {
     const roomState = {
       id: roomId,
       hostSocketId: socket.id,
-      players: [{ socketId: socket.id, playerId, name: profile.name, color: profile.color, pawn: profile.pawn }],
+      players: [{ socketId: socket.id, playerId, name: profile.name, color: profile.color, pawn: profile.pawn, ready: false }],
       gameState: null,
       started: false,
     };
@@ -75,8 +93,9 @@ io.on('connection', (socket) => {
     socket.emit('room-created', {
       roomId,
       playerId,
-      players: roomState.players.map(p => ({ playerId: p.playerId, name: p.name, color: p.color, pawn: p.pawn })),
+      players: roomState.players.map(p => ({ playerId: p.playerId, name: p.name, color: p.color, pawn: p.pawn, ready: p.ready })),
     });
+    emitRoomState(roomState);
     console.log(`[room-created] ${roomId} by ${profile.name}`);
   });
 
@@ -120,16 +139,29 @@ io.on('connection', (socket) => {
     }
     const playerId = room.players.length;
 
-    room.players.push({ socketId: socket.id, playerId, name: profile.name, color: profile.color, pawn: profile.pawn });
+    room.players.push({ socketId: socket.id, playerId, name: profile.name, color: profile.color, pawn: profile.pawn, ready: false });
     socket.join(roomId);
     socket.data.roomId = roomId;
     socket.data.playerId = playerId;
     socket.data.playerName = profile.name;
 
-    const playerList = room.players.map(p => ({ playerId: p.playerId, name: p.name, color: p.color, pawn: p.pawn }));
+    const playerList = room.players.map(p => ({ playerId: p.playerId, name: p.name, color: p.color, pawn: p.pawn, ready: p.ready }));
     socket.emit('room-joined', { roomId, playerId, players: playerList });
-    socket.to(roomId).emit('player-joined', { players: playerList });
+    emitRoomState(room);
     console.log(`[join-room] ${profile.name} joined ${roomId} as player ${playerId}`);
+  });
+
+  socket.on('set-ready', (payload = {}) => {
+    const data = payload && typeof payload === 'object' ? payload : {};
+    if (typeof data.ready !== 'boolean') return;
+
+    const roomId = socket.data.roomId;
+    const room = rooms.get(roomId);
+    if (!room || room.started) return;
+    const player = room.players.find(p => p.socketId === socket.id);
+    if (!player) return;
+    player.ready = data.ready;
+    emitRoomState(room);
   });
 
   // ----------------------------------------------------------
@@ -145,6 +177,11 @@ io.on('connection', (socket) => {
     }
     if (room.players.length < 2) {
       socket.emit('error', { message: 'Potrzeba co najmniej 2 graczy.' });
+      return;
+    }
+    const notReady = room.players.filter(p => !p.ready);
+    if (notReady.length > 0) {
+      socket.emit('error', { message: `Nie wszyscy są gotowi: ${notReady.map(p => p.name).join(', ')}.` });
       return;
     }
     room.started = true;
@@ -208,9 +245,7 @@ io.on('connection', (socket) => {
           room.hostSocketId = room.players[0].socketId;
         }
         room.players.forEach((p, idx) => { p.playerId = idx; });
-        io.to(roomId).emit('player-joined', {
-          players: room.players.map(p => ({ playerId: p.playerId, name: p.name, color: p.color, pawn: p.pawn })),
-        });
+        emitRoomState(room);
       }
     } else {
       // Mark player as disconnected in game state
