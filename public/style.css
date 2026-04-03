@@ -315,12 +315,43 @@ html, body {
   color: var(--teal-light);
   margin-bottom: 16px;
 }
+#lobby-room-code-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+#lobby-room-code-wrap #lobby-room-code {
+  flex: 1;
+  margin-bottom: 0;
+}
+#lobby-copy-confirmation {
+  color: var(--teal-light);
+}
 #lobby-status {
   font-size: .85rem;
   color: var(--text-secondary-dark-bg);
   text-align: center;
   margin-bottom: 14px;
 }
+#lobby-ready-count,
+#lobby-connection-status,
+#lobby-start-block-reason {
+  text-align: center;
+}
+.lobby-player-badges {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 6px;
+}
+.lobby-badge {
+  font-size: .72rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.2);
+}
+.lobby-badge-host { color: #ffd166; border-color: #ffd16655; }
+.lobby-badge-ready { color: #6ee7b7; border-color: #6ee7b755; }
+.lobby-badge-conn { color: #9ad0ff; border-color: #9ad0ff55; }
 
 /* ============================================================
    GAME SCREEN
