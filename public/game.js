@@ -232,6 +232,28 @@ function syncSettingsForm() {
   if (font) font.value = String(gameSettings.fontScale || 1);
   if (quality) quality.value = gameSettings.renderQuality || 'high';
   if (fx) fx.value = String(gameSettings.boardFxIntensity || 1);
+  refreshSettingsLiveLabels();
+}
+
+function getRangeValueText(inputId, value) {
+  const numeric = parseFloat(value);
+  if (!Number.isFinite(numeric)) return value;
+  if (inputId === 'setting-font-scale') return `${numeric.toFixed(2)}×`;
+  return `${numeric.toFixed(1)}×`;
+}
+
+function refreshSettingsLiveLabels() {
+  const pairs = [
+    ['setting-animation-speed', 'setting-animation-speed-value'],
+    ['setting-font-scale', 'setting-font-scale-value'],
+    ['setting-fx-intensity', 'setting-fx-intensity-value']
+  ];
+  pairs.forEach(([inputId, outputId]) => {
+    const inputEl = document.getElementById(inputId);
+    const outputEl = document.getElementById(outputId);
+    if (!inputEl || !outputEl) return;
+    outputEl.textContent = getRangeValueText(inputId, inputEl.value);
+  });
 }
 
 function openSettingsModal() {
@@ -1044,6 +1066,14 @@ function setupGameHandlers() {
 
   const btnSettingsClose = document.getElementById('btn-settings-close');
   if (btnSettingsClose) btnSettingsClose.addEventListener('click', () => closeModal('modal-settings'));
+
+  ['setting-animation-speed', 'setting-font-scale', 'setting-fx-intensity'].forEach(id => {
+    const slider = document.getElementById(id);
+    if (!slider) return;
+    slider.addEventListener('input', () => {
+      refreshSettingsLiveLabels();
+    });
+  });
 
   const btnExitToMenu = document.getElementById('btn-exit-to-menu');
   if (btnExitToMenu) {
