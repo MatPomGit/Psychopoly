@@ -144,10 +144,10 @@
     <!-- Side panel -->
     <div id="side-panel">
       <div id="panel-tabs" role="tablist" aria-label="Panel gry">
-        <button id="tab-actions" class="tab-btn active" data-tab="actions" role="tab" aria-controls="actions-content" aria-selected="true">Akcje</button>
-        <button id="tab-players" class="tab-btn" data-tab="players" role="tab" aria-controls="players-content" aria-selected="false">Gracze</button>
-        <button id="tab-props" class="tab-btn" data-tab="props" role="tab" aria-controls="props-content" aria-selected="false">Własności</button>
-        <button id="tab-log" class="tab-btn" data-tab="log" role="tab" aria-controls="log-content" aria-selected="false">Dziennik</button>
+        <button class="tab-btn active" data-tab="actions" id="tab-actions" role="tab" aria-selected="true" aria-controls="actions-content" tabindex="0">Akcje</button>
+        <button class="tab-btn" data-tab="players" id="tab-players" role="tab" aria-selected="false" aria-controls="players-content" tabindex="-1">Gracze</button>
+        <button class="tab-btn" data-tab="props" id="tab-props" role="tab" aria-selected="false" aria-controls="props-content" tabindex="-1">Własności</button>
+        <button class="tab-btn" data-tab="log" id="tab-log" role="tab" aria-selected="false" aria-controls="log-content" tabindex="-1">Dziennik</button>
       </div>
 
       <!-- Actions tab -->
@@ -181,7 +181,7 @@
           <button id="btn-end-turn" class="btn btn-secondary btn-full" disabled>✔ Zakończ turę</button>
         </div>
 
-        <div id="phase-info" style="font-size:.75rem;opacity:.55;text-align:center;margin-top:4px;"></div>
+        <div id="phase-info" role="status" aria-live="polite" aria-atomic="true" style="font-size:.75rem;opacity:.75;text-align:center;margin-top:4px;"></div>
       </div>
 
       <!-- Players tab -->
