@@ -36,4 +36,5 @@ window.PSYCHOPOLY_DEFAULT_CONFIG = {
   renderQuality: 'high', // low | medium | high
   boardFxIntensity: 1,   // 0.5 - 1.5
   balancePreset: 'standard',
+  actionGuidanceEnabled: true,
 };
