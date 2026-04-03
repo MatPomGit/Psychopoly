@@ -8,8 +8,17 @@ const crypto = require('crypto');
 
 const app = express();
 const httpServer = http.createServer(app);
-const io = new Server(httpServer);
+const io = new Server(httpServer, {
+  cors: {
+    // Allow any origin by default so players on any domain can connect.
+    // Set the CORS_ORIGIN environment variable to restrict access in production
+    // (e.g. CORS_ORIGIN=https://myapp.railway.app).
+    origin: process.env.CORS_ORIGIN || '*',
+    methods: ['GET', 'POST'],
+  },
+});
 
+app.set('trust proxy', 1);
 app.use('/public', express.static(path.join(__dirname, 'public')));
 app.use('/assets', express.static(path.join(__dirname, 'assets')));
 app.get('/', (_req, res) => {
