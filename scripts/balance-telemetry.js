@@ -23,8 +23,26 @@ function loadData() {
   };
 }
 
+let cachedPrestigeScoreFn = null;
+
+function getPrestigeScoreFn() {
+  if (cachedPrestigeScoreFn) return cachedPrestigeScoreFn;
+
+  const context = vm.createContext({ window: {} });
+  loadBrowserFile('public/config.js', context);
+  loadBrowserFile('public/game.js', context);
+
+  const prestigeScoreFn = vm.runInContext('getPrestigeScore', context);
+  if (typeof prestigeScoreFn !== 'function') {
+    throw new Error('Expected getPrestigeScore to be defined in public/game.js');
+  }
+
+  cachedPrestigeScoreFn = prestigeScoreFn;
+  return cachedPrestigeScoreFn;
+}
+
 function score(p) {
-  return p.money + (p.prestige * 12) + (p.energy * 8) + (p.ethics * 8) - (p.burnout * 10);
+  return getPrestigeScoreFn()(p);
 }
 
 function clamp(v, min = 0, max = 100) {
