@@ -90,7 +90,11 @@ function runGame(data, profile, options = {}) {
 
     const roll = (randomInt(6) + 1) + (randomInt(6) + 1);
     const raw = p.pos + roll;
-    if (raw >= 40) p.money += profile.goMoney;
+    if (raw >= 40) {
+      p.money += profile.goMoney;
+      p.prestige += 2;
+      p.energy = clamp(p.energy + 1);
+    }
     p.pos = raw % 40;
     const s = board[p.pos];
 
