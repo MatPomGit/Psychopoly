@@ -26,6 +26,8 @@ const STARTING_ETHICS = 50;
 const CRITICAL_BURNOUT = 100;
 const MAX_ROUNDS = 12;
 const AI_CASH_BUFFER = 300;
+const AI_DECISION_DELAY_MS = 850;
+const AI_PERSONALITY_TYPES = ['conservative', 'balanced', 'aggressive'];
 const ONBOARDING_SEEN_KEY = 'psychopoly-onboarding-seen';
 
 const DICE_FACES = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
@@ -114,6 +116,8 @@ let boardPanX = 0;
 let boardPanY = 0;
 let isDraggingBoard = false;
 let aiStepPending = false;
+let aiStepTimer = null;
+let lastAiDecisionAt = 0;
 let dragStartX = 0;
 let dragStartY = 0;
 let movedPlayersLastUpdate = [];
@@ -1258,6 +1262,7 @@ function createGameState(playerConfigs) {
       color:              p.color || PLAYER_COLORS[i],
       pawn:               p.pawn || PAWN_OPTIONS[i % PAWN_OPTIONS.length].id,
       isAI:               p.isAI || false,
+      aiPersonality:      p.aiPersonality || (p.isAI ? AI_PERSONALITY_TYPES[i % AI_PERSONALITY_TYPES.length] : null),
       money:              activeBalanceProfile.startingMoney,
       prestige:           STARTING_PRESTIGE,
       energy:             STARTING_ENERGY,
@@ -1300,6 +1305,9 @@ function startLocalGame(playerConfigs) {
   applyBalanceProfileFromSettings();
   localGame  = createGameState(playerConfigs);
   aiStepPending = false;
+  if (aiStepTimer) clearTimeout(aiStepTimer);
+  aiStepTimer = null;
+  lastAiDecisionAt = 0;
   renderBoard();
   boardRendered = true;
   // Chat offline note for local mode
@@ -2902,10 +2910,103 @@ function doEndTurn(gs) {
 // AI PLAYER LOGIC
 // ============================================================
 
+function getAiPersonalityProfile(player) {
+  const personality = player.aiPersonality || 'balanced';
+  if (personality === 'conservative') {
+    return {
+      key: 'conservative',
+      label: 'zachowawcza',
+      cashBuffer: AI_CASH_BUFFER + 140,
+      minCash: 220,
+      toleranceDrop: 16,
+      burnoutWeight: 17,
+      ethicsWeight: 12,
+      balanceWeight: 1.2,
+    };
+  }
+  if (personality === 'aggressive') {
+    return {
+      key: 'aggressive',
+      label: 'agresywna',
+      cashBuffer: Math.max(120, AI_CASH_BUFFER - 120),
+      minCash: 100,
+      toleranceDrop: 48,
+      burnoutWeight: 12,
+      ethicsWeight: 10,
+      balanceWeight: 0.8,
+    };
+  }
+  return {
+    key: 'balanced',
+    label: 'zbalansowana',
+    cashBuffer: AI_CASH_BUFFER,
+    minCash: 160,
+    toleranceDrop: 28,
+    burnoutWeight: 15,
+    ethicsWeight: 11,
+    balanceWeight: 1.0,
+  };
+}
+
+function getAiBalanceScore(stats) {
+  const values = [stats.prestige, stats.energy, stats.ethics, 100 - stats.burnout];
+  const avg = values.reduce((sum, val) => sum + val, 0) / values.length;
+  const variance = values.reduce((sum, val) => sum + ((val - avg) ** 2), 0) / values.length;
+  // 100 = very balanced, 0 = heavily skewed.
+  return clampStat(100 - Math.sqrt(variance) * 1.6);
+}
+
+function getAiStateScore(player, profile) {
+  const balance = getAiBalanceScore(player);
+  const ethicsDanger = Math.max(0, 30 - player.ethics) * profile.ethicsWeight;
+  const burnoutDanger = Math.max(0, player.burnout - 70) * profile.burnoutWeight;
+  return (
+    player.money +
+    player.prestige * 11 +
+    player.energy * 10 +
+    player.ethics * 12 -
+    player.burnout * 14 +
+    balance * profile.balanceWeight -
+    ethicsDanger -
+    burnoutDanger
+  );
+}
+
+function evaluateAiBuyDecision(player, space) {
+  const profile = getAiPersonalityProfile(player);
+  const projected = {
+    money: player.money - space.price,
+    prestige: player.prestige + 2,
+    energy: clampStat(player.energy - 3),
+    ethics: player.ethics,
+    burnout: clampStat(player.burnout + 2),
+  };
+  const currentScore = getAiStateScore(player, profile);
+  const projectedScore = getAiStateScore(projected, profile);
+  const scoreDelta = Math.round(projectedScore - currentScore);
+
+  if (projected.money < profile.minCash) {
+    return { shouldBuy: false, reason: `${profile.label}: niski bufor gotówki` };
+  }
+  if (projected.burnout >= 92) {
+    return { shouldBuy: false, reason: `${profile.label}: ryzyko krytycznego wypalenia` };
+  }
+  if (projected.ethics <= 12) {
+    return { shouldBuy: false, reason: `${profile.label}: ryzyko załamania etyki` };
+  }
+  if (projectedScore + profile.toleranceDrop < currentScore) {
+    return { shouldBuy: false, reason: `${profile.label}: bilans stats ↓ (${scoreDelta})` };
+  }
+  return { shouldBuy: true, reason: `${profile.label}: bilans stats ↑ (${scoreDelta})` };
+}
+
+function logAiDecision(gs, player, reason) {
+  addLog(gs, `🤖 ${player.name}: ${reason}`, false, 'turn');
+}
+
 /**
  * Schedule an AI step if the current player is an AI.
- * A 900 ms delay lets the human observer see the board state before
- * the AI acts.  The flag `aiStepPending` prevents stacking callbacks.
+ * A stable delay keeps UI pacing predictable and avoids bursty AI input.
  */
 function scheduleAiTurnIfNeeded(gs) {
   if (gameMode !== 'local' || !gs || gs.phase === 'end') return;
@@ -2913,14 +3014,19 @@ function scheduleAiTurnIfNeeded(gs) {
   if (!cur || cur.bankrupt || !cur.isAI) return;
   if (aiStepPending) return;
   aiStepPending = true;
-  setTimeout(() => {
+  if (aiStepTimer) clearTimeout(aiStepTimer);
+  const elapsed = Date.now() - lastAiDecisionAt;
+  const delay = elapsed >= AI_DECISION_DELAY_MS ? AI_DECISION_DELAY_MS : AI_DECISION_DELAY_MS - elapsed;
+  aiStepTimer = setTimeout(() => {
+    aiStepTimer = null;
     aiStepPending = false;
     if (!localGame || localGame.phase === 'end') return;
     const player = localGame.players[localGame.currentPlayerIndex];
     if (!player || !player.isAI) return;
+    lastAiDecisionAt = Date.now();
     aiStep(localGame);
     updateUI(localGame);
-  }, 900);
+  }, delay);
 }
 
 /**
@@ -2934,14 +3040,18 @@ function aiStep(gs) {
     case 'rolling': {
       if (player.inJail) {
         if (player.getOutOfJailCards > 0) {
+          logAiDecision(gs, player, 'używam karty wyjścia z Izolacji');
           doUseJailCard(gs);
         } else if (player.money >= activeBalanceProfile.jailFine &&
                    (Math.random() < 0.5 || player.jailTurns >= MAX_JAIL_TURNS - 1)) {
+          logAiDecision(gs, player, 'płacę karę, żeby odzyskać tempo');
           doPayJail(gs);
         } else {
+          logAiDecision(gs, player, 'ryzykuję rzut w Izolacji');
           doRoll(gs);
         }
       } else {
+        logAiDecision(gs, player, 'rzucam kośćmi');
         doRoll(gs);
       }
       break;
@@ -2949,20 +3059,29 @@ function aiStep(gs) {
     case 'buying': {
       if (gs.pendingBuy) {
         const space = ACTIVE_BOARD_SPACES[gs.pendingBuy.spaceId];
-        // Buy when the player can afford it and keeps a cash buffer of 300 zł.
-        if (space && player.money >= space.price + AI_CASH_BUFFER) {
+        if (!space) break;
+        const profile = getAiPersonalityProfile(player);
+        const decision = evaluateAiBuyDecision(player, space);
+        if (player.money >= space.price + profile.cashBuffer && decision.shouldBuy) {
+          logAiDecision(gs, player, `kupuję ${space.name} (${decision.reason})`);
           doBuy(gs);
         } else {
+          const reason = player.money < space.price + profile.cashBuffer
+            ? `${profile.label}: za mały bufor gotówki`
+            : decision.reason;
+          logAiDecision(gs, player, `pomijam ${space.name} (${reason})`);
           doPassBuy(gs);
         }
       }
       break;
     }
     case 'card': {
+      logAiDecision(gs, player, 'akceptuję efekt karty');
       doCardOk(gs);
       break;
     }
     case 'end-turn': {
+      logAiDecision(gs, player, 'kończę turę');
       doEndTurn(gs);
       break;
     }
