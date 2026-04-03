@@ -943,15 +943,6 @@ function initSocket() {
     refreshLobbyControls();
   });
 
-  socket.on('player-joined', ({ players, hostPlayerId }) => {
-    currentHostPlayerId = hostPlayerId;
-    isHost = hostPlayerId === myPlayerId;
-    const me = players.find(p => p.playerId === myPlayerId);
-    myReady = Boolean(me && me.ready);
-    renderLobbyPlayers(players);
-    refreshLobbyControls();
-  });
-
   socket.on('game-started', (gs) => {
     gameMode = 'online';
     startOnlineGame(gs);
