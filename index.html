@@ -4,9 +4,25 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Psychopolonia — rynek usług, superwizja i wypalenie</title>
+  <script>
+    (function() {
+      var theme = 'classic';
+      try {
+        var raw = localStorage.getItem('psychopoly-settings');
+        if (raw) {
+          var parsed = JSON.parse(raw);
+          var savedTheme = parsed && parsed.theme;
+          if (savedTheme === 'dark' || savedTheme === 'calm' || savedTheme === 'classic') {
+            theme = savedTheme;
+          }
+        }
+      } catch (_e) {}
+      document.documentElement.classList.add('theme-preload-' + theme);
+    })();
+  </script>
   <link rel="stylesheet" href="public/style.css">
 </head>
-<body>
+<body class="theme-classic">
 
 <!-- ============================================================
      SCREEN: MAIN MENU
@@ -160,7 +176,7 @@
 
       <!-- Actions tab -->
       <div id="actions-content" class="panel-content active" role="tabpanel" aria-labelledby="tab-actions" tabindex="0">
-        <div id="current-player-banner" style="background:rgba(26,188,156,.1);border-radius:6px;padding:8px 10px;font-size:.82rem;font-weight:700;color:#1abc9c;text-align:center;"></div>
+        <div id="current-player-banner" class="current-player-banner"></div>
         <div id="turn-status-panel" class="turn-status-panel">
           <div class="action-section-title">Status tury</div>
           <div class="turn-status-row"><span>Aktywny gracz</span><strong id="turn-status-player">—</strong></div>
@@ -351,6 +367,15 @@
         </div>
         <input type="range" id="setting-font-scale" min="0.8" max="1.4" step="0.05">
         <p class="settings-help">1.00× = domyślnie. Zwiększ, jeśli tekst jest zbyt mały.</p>
+      </div>
+      <div class="form-group settings-row">
+        <label for="setting-theme">Motyw</label>
+        <select id="setting-theme">
+          <option value="classic">Klasyczny</option>
+          <option value="dark">Ciemny</option>
+          <option value="calm">Calm</option>
+        </select>
+        <p class="settings-help">Zmienia paletę kolorów interfejsu. Wybierz wariant o najlepszej czytelności.</p>
       </div>
       <div class="form-group settings-row">
         <label for="setting-balance-preset">Preset balansu</label>

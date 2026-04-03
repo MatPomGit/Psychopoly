@@ -35,5 +35,6 @@ window.PSYCHOPOLY_DEFAULT_CONFIG = {
   fontScale: 1,      // 0.8 - 1.4
   renderQuality: 'high', // low | medium | high
   boardFxIntensity: 1,   // 0.5 - 1.5
+  theme: 'classic',      // classic | dark | calm
   balancePreset: 'standard',
 };
