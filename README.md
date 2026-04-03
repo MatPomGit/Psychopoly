@@ -19,6 +19,12 @@ W tym również:
 - karty wyboru (decyzje gracza z kompromisem między zasobami),
 - rozszerzone opisy ścieżek rozwoju i ryzyk zawodowych.
 
+## Dostępność (A11y) — QA
+
+Bazowa lista kontrolna dostępności interfejsu znajduje się tutaj:
+
+- [`docs/A11Y_QA_CHECKLIST.md`](docs/A11Y_QA_CHECKLIST.md)
+
 ## Uruchomienie lokalne
 ```bash
 npm install
