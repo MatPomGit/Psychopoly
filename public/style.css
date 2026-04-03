@@ -23,6 +23,7 @@
   --ui-font-scale: 1;
   --anim-speed-mult: 1;
   --fx-intensity: 1;
+  --board-scale: 1;
 
   /* board dimensions */
   --corner-size: 78px;
@@ -613,14 +614,14 @@ html, body {
 
 .space-name {
   font-weight: 700;
-  font-size: 6.5px;
+  font-size: clamp(4px, calc(6.5px / var(--board-scale)), 16px);
   line-height: 1.2;
   color: var(--text);
   word-break: break-word;
   hyphens: auto;
 }
 .space-price {
-  font-size: 6px;
+  font-size: clamp(3.5px, calc(6px / var(--board-scale)), 14px);
   color: var(--text-muted);
   margin-top: 1px;
 }
@@ -638,8 +639,8 @@ html, body {
   gap: 3px;
   padding: 6px;
 }
-.space-corner .corner-icon { font-size: 18px; line-height: 1; }
-.space-corner .corner-label { font-size: 7.5px; font-weight: 700; color: var(--text); }
+.space-corner .corner-icon { font-size: clamp(12px, calc(18px / var(--board-scale)), 36px); line-height: 1; }
+.space-corner .corner-label { font-size: clamp(5px, calc(7.5px / var(--board-scale)), 16px); font-weight: 700; color: var(--text); }
 
 /* Type colors */
 .space-type-jail       { background: #fff9c4; }
@@ -1248,7 +1249,10 @@ body.quality-high #board {
     --cell-h: 58px;
   }
   #side-panel { width: 220px; }
-  .space-name { font-size: 5px; }
+  .space-name { font-size: clamp(3.5px, calc(5px / var(--board-scale)), 12px); }
+  .space-price { font-size: clamp(3px, calc(4.5px / var(--board-scale)), 11px); }
+  .space-corner .corner-icon { font-size: clamp(10px, calc(14px / var(--board-scale)), 28px); }
+  .space-corner .corner-label { font-size: clamp(4px, calc(6px / var(--board-scale)), 14px); }
   .player-token { width: 16px; height: 16px; font-size: 7px; }
   .center-title { font-size: 16px; }
 }
@@ -1257,6 +1261,10 @@ body.quality-high #board {
   #side-panel { width: 100%; height: clamp(180px, 35vh, 260px); flex-direction: row; }
   #panel-tabs { flex-direction: column; width: 60px; }
   :root { --corner-size: 48px; --cell-w: 32px; }
+  .space-name { font-size: clamp(3px, calc(4px / var(--board-scale)), 10px); }
+  .space-price { font-size: clamp(2.5px, calc(3.5px / var(--board-scale)), 9px); }
+  .space-corner .corner-icon { font-size: clamp(8px, calc(12px / var(--board-scale)), 24px); }
+  .space-corner .corner-label { font-size: clamp(3.5px, calc(5px / var(--board-scale)), 12px); }
   /* Move space preview below toolbar so they don't overlap */
   .space-preview-box { top: 46px; }
   /* Anchor chat drawer below turn-queue bar instead of viewport midpoint */
@@ -1267,6 +1275,10 @@ body.quality-high #board {
 /* ---- phones ≤ 420 px: board overflows at 48/32 values, scale down ---- */
 @media (max-width: 420px) {
   :root { --corner-size: 40px; --cell-w: 27px; }
+  .space-name { font-size: clamp(6px, calc(3.5px / var(--board-scale)), 9px); }
+  .space-price { font-size: clamp(6px, calc(3px / var(--board-scale)), 8px); }
+  .space-corner .corner-icon { font-size: clamp(7px, calc(10px / var(--board-scale)), 20px); }
+  .space-corner .corner-label { font-size: clamp(6px, calc(4px / var(--board-scale)), 10px); }
   .space-preview-box { width: 140px; font-size: .70rem; }
   #board-toolbar .btn { padding: 4px 7px; }
 }
@@ -1274,6 +1286,8 @@ body.quality-high #board {
 /* ---- very small phones ≤ 340 px ---- */
 @media (max-width: 340px) {
   :root { --corner-size: 34px; --cell-w: 22px; }
+  .space-name { font-size: clamp(6px, calc(3px / var(--board-scale)), 8px); }
+  .space-price { font-size: clamp(6px, calc(2.5px / var(--board-scale)), 7px); }
   .space-preview-box { display: none; }
 }
 

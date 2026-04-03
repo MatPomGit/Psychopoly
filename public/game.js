@@ -251,6 +251,7 @@ function clampBoardScale(value) {
 
 function setBoardScale(nextScale) {
   boardScale = clampBoardScale(nextScale);
+  document.documentElement.style.setProperty('--board-scale', String(boardScale));
   applyBoardTransform();
 }
 
@@ -268,6 +269,7 @@ function setupBoardViewportControls() {
   if (rotRight) rotRight.addEventListener('click', () => { boardRotation += 15; applyBoardTransform(); });
   if (reset) reset.addEventListener('click', () => {
     boardScale = 1;
+    document.documentElement.style.setProperty('--board-scale', '1');
     boardRotation = 0;
     boardPanX = 0;
     boardPanY = 0;
