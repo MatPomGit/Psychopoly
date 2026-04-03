@@ -1045,6 +1045,18 @@ function setupGameHandlers() {
   const btnSettingsClose = document.getElementById('btn-settings-close');
   if (btnSettingsClose) btnSettingsClose.addEventListener('click', () => closeModal('modal-settings'));
 
+  const btnSpacePreviewClose = document.getElementById('btn-space-preview-close');
+  if (btnSpacePreviewClose) {
+    btnSpacePreviewClose.addEventListener('click', () => closeModal('modal-space-preview'));
+  }
+
+  const modalSpacePreview = document.getElementById('modal-space-preview');
+  if (modalSpacePreview) {
+    modalSpacePreview.addEventListener('click', (e) => {
+      if (e.target === modalSpacePreview) closeModal('modal-space-preview');
+    });
+  }
+
   const btnExitToMenu = document.getElementById('btn-exit-to-menu');
   if (btnExitToMenu) {
     btnExitToMenu.addEventListener('click', () => {
@@ -1161,7 +1173,10 @@ function renderBoard() {
       showSpacePreview(space, 'hover');
     });
     cell.addEventListener('mouseleave', () => hideSpaceTooltip());
-    cell.addEventListener('click', () => showSpacePreview(space, 'click'));
+    cell.addEventListener('click', () => {
+      showSpacePreview(space, 'click');
+      if (isCompactPreviewViewport()) openSpacePreviewModal(space);
+    });
 
     board.appendChild(cell);
   });
@@ -1268,14 +1283,51 @@ function getSpacePenalty(space) {
   return 'Brak bezpośredniej kary na tym polu.';
 }
 
+function isCompactPreviewViewport() {
+  return typeof window !== 'undefined' && window.matchMedia('(max-width: 340px)').matches;
+}
+
+function getCompactPreviewText(space) {
+  if (!space) return 'Brak danych.';
+  if (space.type === 'property' || space.type === 'railroad' || space.type === 'utility') {
+    return space.price ? `Koszt: ${space.price} zł` : 'Pole własności';
+  }
+  if (space.type === 'tax') return `Podatek: -${space.amount} zł`;
+  if (space.type === 'card') return 'Dobierz kartę';
+  if (space.type === 'gotojail') return 'Idziesz do Izolacji';
+  return getSpacePenalty(space);
+}
+
+function getSpaceFullDescription(space) {
+  if (!space) return 'Brak danych.';
+  if (space.description) return `${space.description} ${getSpacePenalty(space)}`;
+  return getSpacePenalty(space);
+}
+
+function openSpacePreviewModal(space) {
+  if (!space) return;
+  const title = document.getElementById('modal-space-preview-title');
+  const text = document.getElementById('modal-space-preview-text');
+  if (!title || !text) return;
+  title.textContent = space.name;
+  text.textContent = getSpaceFullDescription(space);
+  openModal('modal-space-preview');
+}
+
 function showSpacePreview(space, source = 'hover') {
   const box = document.getElementById('space-preview');
   if (!box || !space) return;
-  const modeLabel = source === 'click' ? 'Podgląd pola (klik)' : 'Podgląd pola (hover)';
+
+  const compact = isCompactPreviewViewport();
+  const modeLabel = source === 'click' ? 'Podgląd (tap)' : 'Podgląd';
+  const previewText = compact ? getCompactPreviewText(space) : getSpacePenalty(space);
+  const compactHint = compact ? '<div class="space-preview-hint">Tapnij pole, aby zobaczyć pełny opis.</div>' : '';
+
   box.innerHTML = `
     <div class="space-preview-mode">${modeLabel}</div>
     <div class="space-preview-name">${escHtml(space.name)}</div>
-    <div class="space-preview-penalty">${escHtml(getSpacePenalty(space))}</div>
+    <div class="space-preview-penalty">${escHtml(previewText)}</div>
+    ${compactHint}
   `;
 }
 
