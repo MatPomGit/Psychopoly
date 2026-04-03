@@ -71,6 +71,7 @@ let currentHostPlayerId = 0;
 let socketConnectionStatus = 'reconnecting';
 let boardRendered = false;
 let localSelections = [];
+let lastLocalPlayerConfigs = null;
 const AUDIO_PREFS_KEY = 'psychopoly-audio-prefs-v1';
 const SFX_PRESET_PATH = 'assets/sounds/sfx-presets.json';
 const MUSIC_THEME_PATH = 'assets/music/music-theme.json';
@@ -295,6 +296,69 @@ function isLowValueSpamLog(msg = '', type = 'turn') {
 
 function getPrestigeScore(player) {
   return player.money + (player.prestige * 12) + (player.energy * 8) + (player.ethics * 8) - (player.burnout * 10);
+}
+
+function getAssetValue(gs, player) {
+  if (!gs || !player || !Array.isArray(player.properties)) return 0;
+  return player.properties.reduce((sum, spaceId) => {
+    const space = ACTIVE_BOARD_SPACES[spaceId];
+    const ps = gs.properties[spaceId];
+    if (!space) return sum;
+    let value = space.price || 0;
+    if (ps) {
+      value += (ps.houses || 0) * (space.houseCost || 0);
+      if (ps.hotel) value += space.hotelCost || 0;
+      if (ps.mortgaged) value *= 0.5;
+    }
+    return sum + value;
+  }, 0);
+}
+
+function ensureGameAnalytics(gs) {
+  if (!gs) return;
+  if (!gs.analytics) gs.analytics = { snapshots: [], events: [] };
+  if (!Array.isArray(gs.analytics.snapshots)) gs.analytics.snapshots = [];
+  if (!Array.isArray(gs.analytics.events)) gs.analytics.events = [];
+}
+
+function captureRoundSnapshot(gs, note = '') {
+  if (!gs) return;
+  ensureGameAnalytics(gs);
+  const snapshot = {
+    round: gs.roundsCompleted || 0,
+    turn: gs.turn || 0,
+    ts: Date.now(),
+    note,
+    players: gs.players.map((p) => ({
+      id: p.id,
+      name: p.name,
+      money: p.money || 0,
+      prestige: p.prestige || 0,
+      energy: p.energy || 0,
+      ethics: p.ethics || 0,
+      burnout: p.burnout || 0,
+      assetValue: getAssetValue(gs, p),
+      propertyCount: Array.isArray(p.properties) ? p.properties.length : 0,
+      score: getPrestigeScore(p),
+      bankrupt: Boolean(p.bankrupt),
+    })),
+  };
+  gs.analytics.snapshots.push(snapshot);
+}
+
+function recordTurningPoint(gs, { type, playerName, text, impact = 0 } = {}) {
+  if (!gs || !type || !text) return;
+  ensureGameAnalytics(gs);
+  gs.analytics.events.push({
+    type,
+    playerName: playerName || 'Gracz',
+    text,
+    impact,
+    round: gs.roundsCompleted || 0,
+    turn: gs.turn || 0,
+    ts: Date.now(),
+  });
+  if (gs.analytics.events.length > 120) gs.analytics.events.shift();
 }
 
 function applyPlayerDelta(gs, player, delta = {}, reason = '') {
@@ -868,6 +932,14 @@ function setupMenuHandlers() {
     showScreen('screen-online-lobby');
   });
   document.getElementById('btn-settings').addEventListener('click', openSettingsModal);
+  document.getElementById('btn-rematch-same-settings').addEventListener('click', () => {
+    if (!Array.isArray(lastLocalPlayerConfigs) || !lastLocalPlayerConfigs.length) {
+      showToast('Brak zapisanych ustawień ostatniej gry lokalnej.');
+      showScreen('screen-local-setup');
+      return;
+    }
+    startLocalGame(lastLocalPlayerConfigs.map((cfg) => ({ ...cfg })));
+  });
   document.getElementById('btn-play-again').addEventListener('click', () => {
     if (socket) socket.disconnect();
     socket = null;
@@ -1464,6 +1536,7 @@ function createGameState(playerConfigs, matchProfile) {
     pendingCardDeck: null,
     pendingBuy:      null,
     rolledThisTurn:  false,
+    analytics:       { snapshots: [], events: [] },
   };
 }
 
@@ -1477,6 +1550,8 @@ function startLocalGame(playerConfigs, modeKey = DEFAULT_BALANCE_PRESET) {
   selectedLocalMatchMode = profile.name;
   applyBalanceProfile(profile);
   localGame  = createGameState(playerConfigs, profile);
+  lastLocalPlayerConfigs = playerConfigs.map((p) => ({ ...p }));
+  captureRoundSnapshot(localGame, 'start');
   aiStepPending = false;
   if (aiStepTimer) clearTimeout(aiStepTimer);
   aiStepTimer = null;
@@ -2879,6 +2954,12 @@ function doDrawCard(gs, player, deck) {
   }
 
   addLog(gs, `${player.name} ciągnie kartę ${deck === 'insight' ? 'Szansy' : 'Społeczności'}: "${card.text}"`);
+  recordTurningPoint(gs, {
+    type: 'card',
+    playerName: player.name,
+    text: `${player.name} dobrał kartę (${deck === 'insight' ? 'Szansy' : 'Społeczności'}).`,
+    impact: 1,
+  });
   playSfx('card');
   gs.phase       = 'card';
   gs.pendingCard = { card, deck, playerId: player.id };
@@ -3061,6 +3142,14 @@ function doBuy(gs) {
   if (!player.properties.includes(spaceId)) player.properties.push(spaceId);
 
   addLog(gs, `${player.name} kupił ${space.name} za ${space.price} zł.`);
+  if (space.price >= 220) {
+    recordTurningPoint(gs, {
+      type: 'investment',
+      playerName: player.name,
+      text: `${player.name} zrobił dużą inwestycję: ${space.name} (${space.price} zł).`,
+      impact: space.price,
+    });
+  }
   showToast(`${player.name} kupił ${space.name}!`);
   playSfx('buy');
   gs.pendingBuy = null;
@@ -3123,6 +3212,7 @@ function doEndTurn(gs) {
   gs.currentPlayerIndex = next;
   if (next === 0) {
     gs.roundsCompleted++;
+    captureRoundSnapshot(gs, `koniec-rundy-${gs.roundsCompleted}`);
   }
   gs.doubles            = 0;
   gs.turn++;
@@ -3135,6 +3225,7 @@ function doEndTurn(gs) {
     gs.phase = 'end';
     if (active[0]) addLog(gs, `🏆 ${active[0].name} wygrywa przez przetrwanie rynku.`);
     playSfx('win');
+    captureRoundSnapshot(gs, 'finał-przetrwanie');
     return;
   }
   const maxRounds = gs.maxRounds || activeBalanceProfile.maxRounds || DEFAULT_MAX_ROUNDS;
@@ -3144,6 +3235,7 @@ function doEndTurn(gs) {
     gs.phase = 'end';
     addLog(gs, `🏁 Koniec ${maxRounds} rund. Wygrywa ${sorted[0].name} bilansem zawodowym.`);
     playSfx('win');
+    captureRoundSnapshot(gs, 'finał-limit-rund');
     return;
   }
 
@@ -3345,6 +3437,12 @@ function checkPlayerVitalStatus(gs, player) {
   if (player.energy <= 0) addLog(gs, `💥 ${player.name} odpada: energia spadła do zera.`);
   else if (player.ethics <= 0) addLog(gs, `⚠️ ${player.name} odpada: etyka spadła do zera.`);
   else addLog(gs, `🔥 ${player.name} odpada: krytyczne wypalenie.`);
+  recordTurningPoint(gs, {
+    type: 'bankruptcy',
+    playerName: player.name,
+    text: `${player.name} odpada z gry przez krytyczne statystyki.`,
+    impact: -300,
+  });
   showToast(`${player.name} wypada z gry.`);
 }
 
@@ -3387,6 +3485,12 @@ function checkBankruptcy(gs, player, creditorId) {
   // Bankrupt
   player.bankrupt = true;
   addLog(gs, `💀 ${player.name} zbankrutował!`);
+  recordTurningPoint(gs, {
+    type: 'bankruptcy',
+    playerName: player.name,
+    text: `${player.name} zbankrutował i stracił kontrolę nad majątkiem.`,
+    impact: -500,
+  });
   showToast(`${player.name} zbankrutował! 💀`);
   playSfx('bankrupt');
 
@@ -3514,11 +3618,25 @@ function doBuildHouse(gs, player, spaceId) {
     ps.houses = 0;
     ps.hotel  = true;
     addLog(gs, `${player.name} rozwinął pełną specjalizację na ${sp.name}.`);
+    recordTurningPoint(gs, {
+      type: 'investment',
+      playerName: player.name,
+      text: `${player.name} osiągnął pełną specjalizację na ${sp.name} (${buildCost} zł).`,
+      impact: buildCost,
+    });
     showToast(`Pełna specjalizacja na ${sp.name}!`);
     playSfx('build');
   } else {
     ps.houses = (ps.houses || 0) + 1;
     addLog(gs, `${player.name} dokupił certyfikat na ${sp.name} (${ps.houses} domów).`);
+    if (buildCost >= 150) {
+      recordTurningPoint(gs, {
+        type: 'investment',
+        playerName: player.name,
+        text: `${player.name} rozbudował ${sp.name} (+${buildCost} zł inwestycji).`,
+        impact: buildCost,
+      });
+    }
     showToast(`Dodano certyfikat na ${sp.name}!`);
     playSfx('build');
   }
@@ -3719,22 +3837,62 @@ function openBuyModal(gs, spaceId) {
 // GAME OVER
 // ============================================================
 function showGameOver(gs) {
+  ensureGameAnalytics(gs);
+  if (!gs.analytics.snapshots.length) captureRoundSnapshot(gs, 'finał-awaryjny');
   const winner = gs.players[gs.winner];
   document.getElementById('gameover-winner-name').textContent = winner ? winner.name : 'Nieznany';
+  const summary = document.getElementById('gameover-summary');
+  summary.textContent = `Rundy: ${gs.roundsCompleted}/${MAX_ROUNDS} · Tury: ${gs.turn} · Snapshoty: ${gs.analytics.snapshots.length}`;
 
   const final = document.getElementById('gameover-final');
   final.innerHTML = '';
   const sorted = [...gs.players].sort((a, b) => getPrestigeScore(b) - getPrestigeScore(a));
-  sorted.forEach(p => {
+  sorted.forEach((p, idx) => {
     const total = getPrestigeScore(p);
     const div = document.createElement('div');
     div.className = 'gameover-player';
     div.innerHTML = `
       <div class="player-token-sm" style="background:${p.color}; background-image:url('${getPawnIcon(p.pawn)}')">${getInitial(p.name)}</div>
       <div class="gameover-player-name">${escHtml(p.name)}${p.bankrupt ? ' 💀' : ''}</div>
-      <div class="gameover-player-money">${formatMoney(p.money)} · ⭐${p.prestige} · 🔋${p.energy} · ⚖️${p.ethics} · 🔥${p.burnout} · Σ ${total}</div>`;
+      <div class="gameover-player-money">#${idx + 1} · ${formatMoney(p.money)} · ⭐${p.prestige} · 🔋${p.energy} · ⚖️${p.ethics} · 🔥${p.burnout} · Σ ${total}</div>`;
     final.appendChild(div);
   });
+
+  const metricsEl = document.getElementById('gameover-metrics');
+  const [leader, runnerUp] = sorted;
+  const firstSnapshot = gs.analytics.snapshots[0];
+  const lastSnapshot = gs.analytics.snapshots[gs.analytics.snapshots.length - 1];
+  const scoreSwing = leader && firstSnapshot
+    ? (lastSnapshot.players.find((p) => p.id === leader.id)?.score || getPrestigeScore(leader))
+      - (firstSnapshot.players.find((p) => p.id === leader.id)?.score || 0)
+    : 0;
+  const avgBurnout = sorted.length ? Math.round(sorted.reduce((acc, p) => acc + (p.burnout || 0), 0) / sorted.length) : 0;
+  const metricCards = [
+    `🥇 Przewaga lidera: <strong>${leader && runnerUp ? (getPrestigeScore(leader) - getPrestigeScore(runnerUp)) : 0} pkt</strong>`,
+    `💼 Majątek lidera: <strong>${leader ? formatMoney(getAssetValue(gs, leader)) : '0 zł'}</strong>`,
+    `📈 Momentum zwycięzcy: <strong>${scoreSwing >= 0 ? '+' : ''}${scoreSwing} pkt</strong>`,
+    `🔥 Średnie wypalenie: <strong>${avgBurnout}</strong>`,
+    `🏠 Najwięcej własności: <strong>${Math.max(...sorted.map((p) => (p.properties || []).length), 0)}</strong>`,
+  ];
+  metricsEl.innerHTML = metricCards.map((txt) => `<div class="gameover-metric-card">${txt}</div>`).join('');
+
+  const turningPointsEl = document.getElementById('gameover-turning-points');
+  const interestingEvents = [...gs.analytics.events]
+    .sort((a, b) => Math.abs(b.impact || 0) - Math.abs(a.impact || 0))
+    .slice(0, 5);
+  if (!interestingEvents.length) {
+    turningPointsEl.innerHTML = '<h3>Punkty zwrotne</h3><p>Brak wyraźnych zdarzeń krytycznych w tym meczu.</p>';
+  } else {
+    turningPointsEl.innerHTML = `<h3>Punkty zwrotne</h3><ul>${interestingEvents.map((evt) => (
+      `<li><strong>Runda ${evt.round}</strong>: ${escHtml(evt.text)}</li>`
+    )).join('')}</ul>`;
+  }
+
+  const formulaEl = document.getElementById('gameover-formula');
+  formulaEl.innerHTML = `
+    <h3>Jak liczony jest wynik końcowy?</h3>
+    <p><code>Σ = gotówka + (prestiż × 12) + (energia × 8) + (etyka × 8) - (wypalenie × 10)</code></p>
+    <p>W praktyce: zwycięzca to gracz z najwyższym Σ po eliminacjach lub po ${MAX_ROUNDS} rundach.</p>`;
 
   showScreen('screen-game-over');
 }
