@@ -1081,15 +1081,61 @@ html, body {
 
 /* Log tab */
 #log-content { font-size: .75rem; }
+.log-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: linear-gradient(180deg, rgba(15,30,54,.96), rgba(15,30,54,.86));
+  border-bottom: 1px solid rgba(255,255,255,.12);
+  padding: 4px 2px 8px;
+}
+.log-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.log-filter-btn {
+  border: 1px solid rgba(255,255,255,.2);
+  background: rgba(255,255,255,.08);
+  color: var(--text-secondary-dark-bg);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: .67rem;
+  cursor: pointer;
+}
+.log-filter-btn.active {
+  color: #09283a;
+  background: var(--teal-light);
+  border-color: rgba(255,255,255,.5);
+  font-weight: 700;
+}
+#btn-log-top {
+  padding: 3px 8px;
+  font-size: .7rem;
+  white-space: nowrap;
+}
 .log-entry {
   padding: 4px 6px;
   border-radius: 4px;
   margin-bottom: 2px;
   line-height: 1.35;
-  border-left: 2px solid transparent;
+  border-left: 3px solid transparent;
 }
 .log-entry:nth-child(odd) { background: rgba(255,255,255,.04); }
 .log-entry.log-turn { border-left-color: var(--teal); font-weight: 600; }
+.log-entry.log-type-turn { border-left-color: rgba(26,188,156,.8); }
+.log-entry.log-type-money { border-left-color: rgba(241,196,15,.95); background: rgba(241,196,15,.08); }
+.log-entry.log-type-card { border-left-color: rgba(93,173,226,.95); background: rgba(93,173,226,.08); }
+.log-entry.log-type-penalty { border-left-color: rgba(243,156,18,.92); background: rgba(243,156,18,.1); }
+.log-entry.log-type-bankrupt {
+  border-left-color: rgba(231,76,60,.95);
+  background: rgba(231,76,60,.14);
+  color: rgba(255,235,235,.95);
+}
 
 /* Properties tab */
 #properties-content { font-size: .78rem; }
