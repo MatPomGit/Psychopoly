@@ -15,6 +15,9 @@
   --white:     #ffffff;
   --text:      #2c3e50;
   --text-muted:#7f8c8d;
+  --text-secondary-dark-bg: rgba(255,255,255,.82);
+  --text-tertiary-dark-bg: rgba(255,255,255,.72);
+  --text-disabled-dark-bg: rgba(255,255,255,.58);
   --danger:    #e74c3c;
   --warning:   #f39c12;
   --success:   #27ae60;
@@ -157,7 +160,12 @@ html, body {
 }
 
 .form-group { margin-bottom: 16px; }
-.form-group label { display: block; font-size: .82rem; opacity: .7; margin-bottom: 5px; }
+.form-group label {
+  display: block;
+  font-size: .82rem;
+  color: var(--text-secondary-dark-bg);
+  margin-bottom: 5px;
+}
 .form-group input[type=text],
 .form-group input[type=number] {
   width: 100%;
@@ -307,7 +315,12 @@ html, body {
   color: var(--teal-light);
   margin-bottom: 16px;
 }
-#lobby-status { font-size: .85rem; opacity: .65; text-align: center; margin-bottom: 14px; }
+#lobby-status {
+  font-size: .85rem;
+  color: var(--text-secondary-dark-bg);
+  text-align: center;
+  margin-bottom: 14px;
+}
 
 /* ============================================================
    GAME SCREEN
@@ -945,7 +958,7 @@ html, body {
   padding: 9px 4px;
   border: none;
   background: transparent;
-  color: rgba(255,255,255,.5);
+  color: var(--text-tertiary-dark-bg);
   font-size: .75rem;
   font-weight: 600;
   cursor: pointer;
@@ -997,7 +1010,10 @@ html, body {
 }
 .player-name-label { font-weight: 700; font-size: .88rem; flex: 1; }
 .player-money-label { font-size: .88rem; color: var(--teal-light); font-weight: 700; }
-.player-status-row { font-size: .72rem; opacity: .65; }
+.player-status-row {
+  font-size: .72rem;
+  color: var(--text-secondary-dark-bg);
+}
 .player-props-mini { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
 .prop-mini-dot {
   width: 10px; height: 10px;
@@ -1015,7 +1031,7 @@ html, body {
   font-size: .72rem;
   letter-spacing: .08em;
   text-transform: uppercase;
-  opacity: .5;
+  color: var(--text-tertiary-dark-bg);
   margin-bottom: 2px;
 }
 #phase-info strong {
@@ -1082,7 +1098,7 @@ html, body {
   font-size: .72rem;
   letter-spacing: .06em;
   text-transform: uppercase;
-  opacity: .55;
+  color: var(--text-tertiary-dark-bg);
   margin-bottom: 4px;
   display: flex;
   align-items: center;
@@ -1099,7 +1115,7 @@ html, body {
   margin-bottom: 3px;
 }
 .prop-row-name { flex: 1; font-size: .75rem; }
-.prop-row-price { font-size: .72rem; opacity: .55; }
+.prop-row-price { font-size: .72rem; color: var(--text-tertiary-dark-bg); }
 .prop-row-buildings { font-size: .72rem; color: var(--teal-light); }
 
 /* ============================================================
