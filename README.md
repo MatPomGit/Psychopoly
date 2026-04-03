@@ -26,3 +26,48 @@ npm run start
 ```
 
 Aplikacja uruchomi się pod adresem: `http://localhost:3000`.
+
+> **Ważne:** tryb online wymaga uruchomionego serwera Node.js (`npm start`).
+> Nie otwieraj `index.html` bezpośrednio z dysku — socket.io nie będzie dostępne.
+
+## Wdrożenie online (gra multiplayer przez internet)
+
+Aby grać online z innymi graczami przez internet, aplikacja musi być uruchomiona
+na serwerze z Node.js. Poniżej przykłady darmowych platform.
+
+### Railway
+
+1. Załóż konto na [railway.app](https://railway.app)
+2. Kliknij **New Project → Deploy from GitHub repo**
+3. Wybierz to repozytorium
+4. Railway automatycznie wykryje Node.js i uruchomi `npm start`
+5. Udostępnij wygenerowany adres URL innym graczom
+
+### Render
+
+1. Załóż konto na [render.com](https://render.com)
+2. Kliknij **New → Web Service** i połącz z GitHub
+3. Ustaw:
+   - **Build Command:** `npm install`
+   - **Start Command:** `node server.js`
+4. Kliknij **Deploy**
+
+### Heroku
+
+```bash
+heroku create
+git push heroku main
+heroku open
+```
+
+### Samodzielny serwer (VPS / Linux)
+
+```bash
+git clone <repo-url>
+cd Psychopoly
+npm install
+npm start          # serwer działa na porcie 3000
+```
+
+Pamiętaj, by otworzyć port 3000 w zaporze (`ufw allow 3000`) lub użyć
+reverse proxy (nginx) na porcie 80/443.
