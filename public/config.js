@@ -37,4 +37,5 @@ window.PSYCHOPOLY_DEFAULT_CONFIG = {
   boardFxIntensity: 1,   // 0.5 - 1.5
   theme: 'classic',      // classic | dark | calm
   balancePreset: 'standard',
+  actionGuidanceEnabled: true,
 };

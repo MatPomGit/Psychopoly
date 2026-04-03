@@ -135,6 +135,7 @@ let onboardingStepIndex = 0;
 let onboardingActive = false;
 let onboardingShownThisSession = false;
 let onboardingHighlightedEl = null;
+let actionSuggestion = null;
 
 const ONBOARDING_STEPS = [
   {
@@ -358,6 +359,93 @@ function applySettings() {
   document.body.classList.add(`quality-${gameSettings.renderQuality || 'high'}`);
 }
 
+function isActionGuidanceEnabled() {
+  return gameSettings.actionGuidanceEnabled !== false;
+}
+
+function getPlayerUpkeepLoad(gs, player) {
+  if (!gs || !player || !Array.isArray(player.properties)) return 0;
+  return player.properties.reduce((sum, spaceId) => {
+    const ps = gs.properties[spaceId];
+    if (!ps) return sum + 1;
+    const buildings = (ps.houses || 0) + (ps.hotel ? 2 : 0);
+    return sum + 1 + buildings;
+  }, 0);
+}
+
+function evaluateActionRisk(gs, player, actionType, options = {}) {
+  if (!gs || !player) return null;
+  const projectedCost = Math.max(0, options.projectedCost || 0);
+  const projectedCash = player.money - projectedCost;
+  const upkeepLoad = getPlayerUpkeepLoad(gs, player);
+  let riskScore = 0;
+  const reasons = [];
+
+  if (projectedCash < 150) {
+    riskScore += 2;
+    reasons.push('niska poduszka gotówki');
+  } else if (projectedCash < 300) {
+    riskScore += 1;
+    reasons.push('mała poduszka gotówki');
+  }
+
+  if (player.burnout >= 90) {
+    riskScore += 2;
+    reasons.push('wysokie wypalenie');
+  } else if (player.burnout >= 75) {
+    riskScore += 1;
+    reasons.push('rosnące wypalenie');
+  }
+
+  if (player.ethics <= 15) {
+    riskScore += 2;
+    reasons.push('krytycznie niska etyka');
+  } else if (player.ethics <= 30) {
+    riskScore += 1;
+    reasons.push('niska etyka');
+  }
+
+  if (actionType === 'buy' || actionType === 'build') {
+    if (upkeepLoad >= 12) {
+      riskScore += 2;
+      reasons.push('duży upkeep aktywów');
+    } else if (upkeepLoad >= 8) {
+      riskScore += 1;
+      reasons.push('rosnący upkeep aktywów');
+    }
+  }
+
+  if (actionType === 'mortgage') {
+    if (projectedCash < 200) {
+      riskScore = Math.max(0, riskScore - 2);
+      reasons.push('zastaw poprawia płynność');
+    } else {
+      riskScore += 1;
+      reasons.push('zastaw ogranicza przychody długofalowe');
+    }
+  }
+
+  const label = riskScore >= 3 ? 'Ryzykownie' : 'Bezpiecznie';
+  return {
+    label,
+    reasons,
+    actionType,
+  };
+}
+
+function setActionSuggestion(gs, actionType, options = {}) {
+  if (!isActionGuidanceEnabled()) {
+    actionSuggestion = null;
+    return;
+  }
+  const player = gs && gs.players ? gs.players[gs.currentPlayerIndex] : null;
+  actionSuggestion = evaluateActionRisk(gs, player, actionType, options);
+}
+
+function clearActionSuggestion() {
+  actionSuggestion = null;
+}
+
 function syncSettingsForm() {
   const anim = document.getElementById('setting-animation-speed');
   const font = document.getElementById('setting-font-scale');
@@ -365,12 +453,14 @@ function syncSettingsForm() {
   const theme = document.getElementById('setting-theme');
   const balancePreset = document.getElementById('setting-balance-preset');
   const fx = document.getElementById('setting-fx-intensity');
+  const guidance = document.getElementById('setting-action-guidance');
   if (anim) anim.value = String(gameSettings.animationSpeed || 1);
   if (font) font.value = String(gameSettings.fontScale || 1);
   if (quality) quality.value = gameSettings.renderQuality || 'high';
   if (theme) theme.value = gameSettings.theme || 'classic';
   if (balancePreset) balancePreset.value = getBalancePresetKey();
   if (fx) fx.value = String(gameSettings.boardFxIntensity || 1);
+  if (guidance) guidance.checked = gameSettings.actionGuidanceEnabled !== false;
   refreshSettingsLiveLabels();
 }
 
@@ -1471,6 +1561,7 @@ function setupGameHandlers() {
   // Buy confirm
   document.getElementById('btn-buy-confirm').addEventListener('click', () => {
     if (!localGame) return;
+    clearActionSuggestion();
     closeModal('modal-buy');
     if (gameMode === 'local') {
       doBuy(localGame);
@@ -1481,6 +1572,7 @@ function setupGameHandlers() {
   // Buy pass
   document.getElementById('btn-buy-pass').addEventListener('click', () => {
     if (!localGame) return;
+    clearActionSuggestion();
     closeModal('modal-buy');
     if (gameMode === 'local') {
       doPassBuy(localGame);
@@ -1490,12 +1582,14 @@ function setupGameHandlers() {
 
   // Build modal close
   document.getElementById('btn-build-close').addEventListener('click', () => {
+    clearActionSuggestion();
     closeModal('modal-build');
     if (localGame) updateUI(localGame);
   });
 
   // Mortgage modal close
   document.getElementById('btn-mortgage-close').addEventListener('click', () => {
+    clearActionSuggestion();
     closeModal('modal-mortgage');
     if (localGame) updateUI(localGame);
   });
@@ -1578,9 +1672,12 @@ function setupGameHandlers() {
       gameSettings.theme = document.getElementById('setting-theme').value || 'classic';
       gameSettings.boardFxIntensity = parseFloat(document.getElementById('setting-fx-intensity').value) || 1;
       gameSettings.balancePreset = document.getElementById('setting-balance-preset').value || DEFAULT_BALANCE_PRESET;
+      gameSettings.actionGuidanceEnabled = !!document.getElementById('setting-action-guidance')?.checked;
       applyBalanceProfileFromSettings();
       applySettings();
       saveSettings();
+      if (!isActionGuidanceEnabled()) clearActionSuggestion();
+      if (localGame) updateUI(localGame);
       closeModal('modal-settings');
       showToast('Ustawienia zapisane.');
     });
@@ -2331,12 +2428,20 @@ function updateActionButtons(gs) {
   }
   updateTurnStatusPanel(gs, { cur, myTurn, curIsAI, guidance });
 
+  const modalBuyOpen = !!document.getElementById('modal-buy')?.classList.contains('open');
+  const modalBuildOpen = !!document.getElementById('modal-build')?.classList.contains('open');
+  const modalMortgageOpen = !!document.getElementById('modal-mortgage')?.classList.contains('open');
+  if (!modalBuyOpen && !modalBuildOpen && !modalMortgageOpen) clearActionSuggestion();
+
   const phaseInfo = document.getElementById('phase-info');
   if (phaseInfo) {
     if (curIsAI) {
       phaseInfo.innerHTML = `<span class="ai-thinking-indicator">Status fazy: 🤖 AI myśli…</span>`;
     } else {
-      phaseInfo.innerHTML = 'Szczegóły znajdziesz wyżej w panelu „Status tury”.';
+      const suggestionLine = isActionGuidanceEnabled() && actionSuggestion
+        ? `<br><strong>Sugestia:</strong> ${actionSuggestion.label}${actionSuggestion.reasons.length ? ` (${actionSuggestion.reasons[0]})` : ''}.`
+        : '';
+      phaseInfo.innerHTML = `Szczegóły znajdziesz wyżej w panelu „Status tury”.${suggestionLine}`;
     }
   }
 
@@ -2419,8 +2524,11 @@ function updateActionButtons(gs) {
       else button.classList.add('is-secondary-option');
     });
 
-    if (phaseInfo) {
-      phaseInfo.innerHTML = 'Szczegóły znajdziesz wyżej w panelu „Status tury”.';
+    if (phaseInfo && !curIsAI) {
+      const suggestionLine = isActionGuidanceEnabled() && actionSuggestion
+        ? `<br><strong>Sugestia:</strong> ${actionSuggestion.label}${actionSuggestion.reasons.length ? ` (${actionSuggestion.reasons[0]})` : ''}.`
+        : '';
+      phaseInfo.innerHTML = `Szczegóły znajdziesz wyżej w panelu „Status tury”.${suggestionLine}`;
     }
   }
 }
@@ -3265,6 +3373,17 @@ function openBuildModal(gs) {
     container.innerHTML = '<p style="color:#666;font-size:.85rem">Nie masz pełnych grup, aby budować.</p>';
   }
 
+  let cheapestBuildCost = Infinity;
+  container.querySelectorAll('button[data-action="build"]').forEach((btn) => {
+    const spaceId = parseInt(btn.dataset.id, 10);
+    const sp = ACTIVE_BOARD_SPACES[spaceId];
+    const ps = gs.properties[spaceId];
+    if (!sp || !ps) return;
+    const cost = ps.houses >= 4 ? sp.hotelCost : sp.houseCost;
+    if (cost < cheapestBuildCost) cheapestBuildCost = cost;
+  });
+  setActionSuggestion(gs, 'build', { projectedCost: Number.isFinite(cheapestBuildCost) ? cheapestBuildCost : 0 });
+
   container.querySelectorAll('button[data-action]').forEach(btn => {
     btn.addEventListener('click', () => {
       const action  = btn.dataset.action;
@@ -3371,6 +3490,8 @@ function openMortgageModal(gs) {
     list.innerHTML = '<p style="color:#666;font-size:.85rem">Brak zarządzalnych własności.</p>';
   }
 
+  setActionSuggestion(gs, 'mortgage', { projectedCost: 0 });
+
   list.querySelectorAll('button[data-action]').forEach(btn => {
     btn.addEventListener('click', () => {
       const action  = btn.dataset.action;
@@ -3461,6 +3582,8 @@ function openBuyModal(gs, spaceId) {
   const space  = ACTIVE_BOARD_SPACES[spaceId];
   const player = gs.players[gs.currentPlayerIndex];
   if (!space || !player) return;
+
+  setActionSuggestion(gs, 'buy', { projectedCost: space.price || 0 });
 
   document.getElementById('modal-buy-name').textContent  = space.name;
   document.getElementById('modal-buy-price').textContent = `Cena: ${space.price} zł`;
