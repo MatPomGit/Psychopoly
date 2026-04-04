@@ -138,6 +138,7 @@ let onboardingActive = false;
 let onboardingShownThisSession = false;
 let onboardingHighlightedEl = null;
 let actionSuggestion = null;
+let tooltipHideTimer = null;
 let selectedLocalMatchMode = DEFAULT_BALANCE_PRESET;
 let selectedOnlineMatchMode = DEFAULT_BALANCE_PRESET;
 
@@ -762,6 +763,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupLocalSetupHandlers();
   setupOnlineLobbyHandlers();
   setupGameHandlers();
+  setupContextHelpLinks();
   setupOnboardingHandlers();
   bindGlobalButtonSfx();
   setupBoardViewportControls();
@@ -932,6 +934,7 @@ function setupMenuHandlers() {
     showScreen('screen-online-lobby');
   });
   document.getElementById('btn-settings').addEventListener('click', openSettingsModal);
+  document.getElementById('btn-help-menu').addEventListener('click', () => openHelpModal());
   document.getElementById('btn-rematch-same-settings').addEventListener('click', () => {
     if (!Array.isArray(lastLocalPlayerConfigs) || !lastLocalPlayerConfigs.length) {
       showToast('Brak zapisanych ustawień ostatniej gry lokalnej.');
@@ -947,6 +950,103 @@ function setupMenuHandlers() {
     localGame = null;
     boardRendered = false;
     showScreen('screen-menu');
+  });
+}
+
+function getDynamicHelpStatsEntries() {
+  const profile = activeBalanceProfile || getBalanceProfile();
+  return [
+    { id: 'stats-money', title: '💰 Gotówka', text: 'Pozwala kupować aktywa, rozwijać je i opłacać kary.', caution: 'Gdy spada poniżej 0, grozi bankructwo.', counter: 'Pilnuj bufora na czynsz i Izolację.' },
+    { id: 'stats-prestige', title: '⭐ Prestiż', text: 'Buduje końcowy bilans zawodowy i pomaga wygrać bez bycia najbogatszym.', caution: 'Spadki po kartach i kryzysach bolą w rankingu.', counter: 'Celuj w stabilne źródła punktów (karty, START, rozwój).' },
+    { id: 'stats-energy', title: '🔋 Energia', text: 'Koszt większości działań; wyczerpanie blokuje dalszą grę.', caution: '0 energii = odpadnięcie z partii.', counter: 'Wybieraj odpoczynek, nie tylko szybki zysk.' },
+    { id: 'stats-ethics', title: '⚖️ Etyka', text: 'Chroni bilans i decyzje ryzykowne reputacyjnie.', caution: '0 etyki = odpadnięcie z partii.', counter: 'Nie nadużywaj skrótów, wzmacniaj etykę kartami i wyborem opcji.' },
+    { id: 'stats-burnout', title: '🔥 Wypalenie', text: 'Rosnące wypalenie obniża wynik i zwiększa ryzyko utraty kontroli.', caution: `Krytyczny pułap: ${CRITICAL_BURNOUT}.`, counter: 'Równoważ intensywne tury regeneracją i superwizją.' },
+    { id: 'stats-supervision', title: '🛡️ Superwizja', text: 'Tarcza zużywana przy części negatywnych efektów etycznych.', caution: 'Brak tarczy może uruchomić dodatkową karę etyczną.', counter: 'Aktywuj ją kartami „Superwizja”.' },
+    { id: 'stats-cards', title: '🎫 Karty wolności', text: 'Pozwalają wyjść z Izolacji bez opłaty.', caution: `Bez karty po ${MAX_JAIL_TURNS} turach płacisz karę.`, counter: `W zależności od trybu partii kara to zwykle około ${profile.jailFine} zł.` },
+  ];
+}
+
+function getDynamicHelpFieldEntries() {
+  const fieldCounts = ACTIVE_BOARD_SPACES.reduce((acc, space) => {
+    acc[space.type] = (acc[space.type] || 0) + 1;
+    return acc;
+  }, {});
+  return [
+    { id: 'field-go', title: '▶ START', text: 'Po przejściu przez START dostajesz gotówkę, prestiż i energię.', caution: 'Nie planuj ruchów „na styk” bez rezerwy.', counter: 'Użyj bonusu START do stabilizacji budżetu.', meta: `Bonus: +${(activeBalanceProfile || getBalanceProfile()).goMoney} zł / +2⭐ / +1🔋` },
+    { id: 'field-property', title: '🏠 Aktywa (property)', text: 'Kupujesz i rozwijasz, aby pobierać większy czynsz.', caution: 'Nadmiar zakupów = niski bufor gotówki i więcej ryzyka.', counter: 'Rozwijaj tylko grupy, które realnie utrzymasz.' },
+    { id: 'field-railroad', title: '🚂 Kanały pozyskania klienta (railroad)', text: 'Dochód rośnie wraz z liczbą posiadanych pól tego typu.', caution: 'Zakup pojedynczego pola bywa słaby bez kompletu.', counter: 'Warto je łączyć lub handlować o synergię.' },
+    { id: 'field-utility', title: '⚙️ Narzędzia (utility)', text: 'Pola użytkowe dają specjalny model opłat oparty o rzut.', caution: 'Dochód bywa zmienny, nie opieraj na nich całej strategii.', counter: 'Traktuj jako uzupełnienie portfela.' },
+    { id: 'field-card', title: '🃏 Pola kart', text: 'Wybierasz właściwy deck i natychmiast wykonujesz efekt karty.', caution: 'Część kart daje mocny zysk kosztem energii/etyki.', counter: 'Przed decyzją sprawdź swoje najsłabsze statystyki.' },
+    { id: 'field-tax', title: '💸 Podatek / koszt', text: 'Płacisz kwotę z pola; na 39. polu możliwa jest opcja terapeutyczna.', caution: 'Koszty kumulują się z czynszami i karami.', counter: 'Trzymaj rezerwę na podatek i Izolację.' },
+    { id: 'field-jail', title: '🔒 Izolacja (odwiedziny)', text: 'To bezpieczne pole „odwiedzin”, bez automatycznej kary.', caution: 'Prawdziwa Izolacja uruchamia się po wejściu na „Wypalenie zawodowe”.', counter: 'Rozróżniaj pole odwiedzin od przymusowego pobytu.' },
+    { id: 'field-gotojail', title: '👮 Wypalenie zawodowe (go to jail)', text: 'Przenosi do Izolacji i nakłada natychmiastowe koszty kondycji.', caution: 'To jeden z najmocniejszych negatywnych triggerów.', counter: 'Pilnuj energii i wypalenia, by łatwiej przetrwać wejście.' },
+  ].map((entry) => ({
+    ...entry,
+    meta: entry.meta || `Liczba pól na planszy: ${fieldCounts[entry.id.replace('field-', '')] || 0}`,
+  }));
+}
+
+function getDynamicHelpDeckEntries() {
+  const gs = localGame;
+  const insightLive = gs ? (gs.insightCards.length + gs.insightDiscard.length) : ACTIVE_INSIGHT_CARDS.length;
+  const sessionLive = gs ? (gs.sessionCards.length + gs.sessionDiscard.length) : ACTIVE_SESSION_CARDS.length;
+  return [
+    { id: 'deck-insight', title: '🟧 Deck Superwizja', text: 'Mocniejsze, bardziej strategiczne zdarzenia i wybory.', caution: 'Często kusi szybkim zyskiem kosztem zasobów miękkich.', counter: 'Bierz opcje zgodne z Twoją aktualną kondycją.', meta: `Karty w puli: ${insightLive}` },
+    { id: 'deck-session', title: '🟦 Deck Sesja', text: 'Codzienne sytuacje gabinetowe o mniejszej skali efektów.', caution: 'Seria drobnych strat energii potrafi zaskoczyć.', counter: 'Nie ignoruj małych minusów powtarzanych przez wiele tur.', meta: `Karty w puli: ${sessionLive}` },
+  ];
+}
+
+function getDynamicHelpStatusEntries() {
+  const profile = activeBalanceProfile || getBalanceProfile();
+  return [
+    { id: 'status-jail', title: '🔒 W Izolacji', text: 'Nie wykonujesz standardowego ruchu, próbujesz wyjść rzutem/kartą/opłatą.', caution: `Po ${MAX_JAIL_TURNS} turach zapłacisz ${profile.jailFine} zł.`, counter: 'Trzymaj gotówkę lub kartę wolności na awaryjne wyjście.' },
+    { id: 'status-supervision-shield', title: '🛡️ Tarcza superwizji', text: 'Chroni przed częścią dodatkowych kar etycznych z kart.', caution: 'Zużywa się, więc nie traktuj jej jako stałej odporności.', counter: 'Odnawiaj tarczę kartami i nie marnuj jej na zbędne ryzyko.' },
+    { id: 'status-bankrupt', title: '💀 Bankructwo / odpadnięcie', text: 'Gracz wypada z gry przy trwałym braku zasobów lub krytycznych statystykach.', caution: 'Nie dotyczy tylko gotówki — także energia i etyka mogą wyeliminować.', counter: 'Sprzedawaj/zastawiaj aktywa zanim będzie za późno.' },
+    { id: 'status-doubles', title: '🎲 Dublet', text: 'Dublety dają dodatkowy rzut i mogą zmienić tempo tury.', caution: 'Długi ciąg dubletów zwiększa ekspozycję na ryzykowne pola.', counter: 'Po dobrym dublecie nie przeinwestuj od razu zysków.' },
+  ];
+}
+
+function renderHelpSection(title, entries) {
+  const blocks = entries.map((entry) => `
+    <article class="help-entry" id="${entry.id}">
+      <div class="help-entry-title">${entry.title}</div>
+      <div class="help-entry-text"><strong>Co robi:</strong> ${entry.text}</div>
+      <div class="help-entry-text"><strong>Kiedy uważać:</strong> ${entry.caution}</div>
+      <div class="help-entry-text"><strong>Jak przeciwdziałać:</strong> ${entry.counter}</div>
+      ${entry.meta ? `<div class="help-entry-meta">${entry.meta}</div>` : ''}
+    </article>
+  `).join('');
+  return `<section class="help-section"><h3>${title}</h3><div class="help-grid">${blocks}</div></section>`;
+}
+
+function renderHelpModalContent() {
+  const body = document.getElementById('help-content');
+  if (!body) return;
+  body.innerHTML = [
+    renderHelpSection('Statystyki', getDynamicHelpStatsEntries()),
+    renderHelpSection('Typy pól', getDynamicHelpFieldEntries()),
+    renderHelpSection('Decki kart', getDynamicHelpDeckEntries()),
+    renderHelpSection('Statusy specjalne', getDynamicHelpStatusEntries()),
+  ].join('');
+}
+
+function openHelpModal(targetEntryId = '') {
+  renderHelpModalContent();
+  openModal('modal-help');
+  if (!targetEntryId) return;
+  window.requestAnimationFrame(() => {
+    const entry = document.getElementById(targetEntryId);
+    if (entry) entry.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
+function setupContextHelpLinks() {
+  document.addEventListener('click', (event) => {
+    const link = event.target.closest('[data-help-target]');
+    if (!link) return;
+    event.preventDefault();
+    const target = link.getAttribute('data-help-target') || '';
+    openHelpModal(target);
   });
 }
 
@@ -1773,6 +1873,8 @@ function setupGameHandlers() {
 
   const btnSettingsClose = document.getElementById('btn-settings-close');
   if (btnSettingsClose) btnSettingsClose.addEventListener('click', () => closeModal('modal-settings'));
+  const btnHelpClose = document.getElementById('btn-help-close');
+  if (btnHelpClose) btnHelpClose.addEventListener('click', () => closeModal('modal-help'));
 
   const btnSpacePreviewClose = document.getElementById('btn-space-preview-close');
   if (btnSpacePreviewClose) {
@@ -1783,6 +1885,24 @@ function setupGameHandlers() {
   if (modalSpacePreview) {
     modalSpacePreview.addEventListener('click', (e) => {
       if (e.target === modalSpacePreview) closeModal('modal-space-preview');
+    });
+  }
+  const modalHelp = document.getElementById('modal-help');
+  if (modalHelp) {
+    modalHelp.addEventListener('click', (e) => {
+      if (e.target === modalHelp) closeModal('modal-help');
+    });
+  }
+  const tooltip = document.getElementById('space-tooltip');
+  if (tooltip) {
+    tooltip.addEventListener('mouseenter', () => {
+      if (tooltipHideTimer) {
+        clearTimeout(tooltipHideTimer);
+        tooltipHideTimer = null;
+      }
+    });
+    tooltip.addEventListener('mouseleave', () => {
+      hideSpaceTooltip();
     });
   }
   ['setting-animation-speed', 'setting-font-scale', 'setting-fx-intensity'].forEach(id => {
@@ -1912,10 +2032,20 @@ function renderBoard() {
     cell.appendChild(tokenLayer);
 
     cell.addEventListener('mouseenter', (e) => {
+      if (tooltipHideTimer) {
+        clearTimeout(tooltipHideTimer);
+        tooltipHideTimer = null;
+      }
       showSpaceTooltip(space, cell);
       showSpacePreview(space, 'hover');
     });
-    cell.addEventListener('mouseleave', () => hideSpaceTooltip());
+    cell.addEventListener('mouseleave', () => {
+      if (tooltipHideTimer) clearTimeout(tooltipHideTimer);
+      tooltipHideTimer = window.setTimeout(() => {
+        hideSpaceTooltip();
+        tooltipHideTimer = null;
+      }, 120);
+    });
     cell.addEventListener('click', () => {
       showSpacePreview(space, 'click');
       if (isCompactPreviewViewport()) openSpacePreviewModal(space);
@@ -2053,7 +2183,7 @@ function openSpacePreviewModal(space) {
   const text = document.getElementById('modal-space-preview-text');
   if (!title || !text) return;
   title.textContent = space.name;
-  text.textContent = getSpaceFullDescription(space);
+  text.innerHTML = `${escHtml(getSpaceFullDescription(space))}<br><button class="context-help-link" data-help-target="field-${space.type}">📘 Otwórz wpis o tym typie pola</button>`;
   openModal('modal-space-preview');
 }
 
@@ -2070,6 +2200,7 @@ function showSpacePreview(space, source = 'hover') {
     <div class="space-preview-mode">${modeLabel}</div>
     <div class="space-preview-name">${escHtml(space.name)}</div>
     <div class="space-preview-penalty">${escHtml(previewText)}</div>
+    <button class="context-help-link" data-help-target="field-${space.type}">📘 Co to za typ pola?</button>
     ${compactHint}
   `;
 }
@@ -2081,7 +2212,11 @@ function showSpaceTooltip(space, el) {
   tooltip.style.left = (rect.left + rect.width / 2) + 'px';
   tooltip.style.top  = (rect.top - 8) + 'px';
   const desc = space.description || getSpacePenalty(space);
-  tooltip.innerHTML = `<div class="space-tooltip-name">${escHtml(space.name)}</div><div class="space-tooltip-desc">${escHtml(desc)}</div>`;
+  tooltip.innerHTML = `
+    <div class="space-tooltip-name">${escHtml(space.name)}</div>
+    <div class="space-tooltip-desc">${escHtml(desc)}</div>
+    <button class="context-help-link" data-help-target="field-${space.type}">📘 Typ pola</button>
+  `;
   tooltip.style.display = 'block';
 }
 
@@ -3774,7 +3909,7 @@ function openCardModal(card, deck) {
   deckEl.textContent  = deck === 'insight' ? '🎲 Karta Szansy' : '👥 Karta Społeczności';
   deckEl.className    = `card-modal-deck ${deck}`;
   iconEl.textContent  = deck === 'insight' ? '🎲' : '👥';
-  textEl.textContent  = card.text;
+  textEl.innerHTML = `${escHtml(card.text)}<br><button class="help-anchor-link" data-help-target="deck-${deck}">📘 Zobacz opis decku</button>`;
 
   openModal('modal-card');
 }
