@@ -401,6 +401,7 @@ const AVAILABLE_COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6',
 const PAWN_IDS = ['brain', 'lamp', 'rocket', 'star', 'puzzle', 'book'];
 const JAIL_POSITION = 14;
 const MAX_JAIL_TURNS = 3;
+const MAX_LOG_ENTRIES = 80;
 const DEFAULT_MODE_KEY = 'standard';
 const STARTING_PRESTIGE = 10;
 const STARTING_ENERGY = 50;
@@ -540,7 +541,7 @@ function sanitizeState(gs) {
 
 function addLog(gs, msg) {
   gs.log.unshift({ text: msg, turn: gs.turn, ts: Date.now() });
-  if (gs.log.length > 80) gs.log.pop();
+  if (gs.log.length > MAX_LOG_ENTRIES) gs.log.pop();
 }
 
 function clampStat(val, min = 0, max = 100) {
@@ -834,6 +835,8 @@ function handleUseJailCard(gs, player) {
 }
 
 function getPrestigeScore(player) {
+  // Psychopolonia final score: money is the base, prestige and ethics reflect long-term reputation,
+  // energy reflects sustainable practice, burnout is a penalty for overexertion.
   return player.money + (player.prestige || 0) * 12 + (player.energy || 0) * 8 + (player.ethics || 0) * 8 - (player.burnout || 0) * 10;
 }
 
