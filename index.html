@@ -35,8 +35,25 @@
   <div class="menu-buttons">
     <button id="btn-local"  class="btn btn-primary  btn-lg btn-full">🧠 Graj Lokalnie</button>
     <button id="btn-online" class="btn btn-secondary btn-lg btn-full">🌐 Graj Online</button>
+    <button id="btn-achievements" class="btn btn-secondary btn-lg btn-full">🏅 Osiągnięcia</button>
     <button id="btn-settings" class="btn btn-outline btn-lg btn-full">⚙️ Ustawienia</button>
     <button id="btn-help-menu" class="btn btn-outline btn-lg btn-full">📘 Pomoc / Encyklopedia</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     SCREEN: ACHIEVEMENTS
+     ============================================================ -->
+<div id="screen-achievements" class="screen">
+  <div class="setup-card achievements-card">
+    <h2>Osiągnięcia</h2>
+    <p class="setup-help">Odblokowuj cele metagry i wracaj po kolejne wyzwania.</p>
+    <div id="achievements-summary" class="achievements-summary"></div>
+    <div id="achievements-list" class="achievements-list"></div>
+    <div id="season-journal-preview" class="season-journal-preview"></div>
+    <div class="setup-actions">
+      <button id="btn-achievements-back" class="btn btn-outline">← Wstecz</button>
+    </div>
   </div>
 </div>
 
@@ -226,6 +243,7 @@
 
         <div class="action-section">
           <div class="action-section-title">Koniec tury</div>
+          <button id="btn-undo" class="btn btn-outline btn-full" disabled title="Cofnij ostatnią bezpieczną akcję">↩ Cofnij</button>
           <button id="btn-end-turn" class="btn btn-secondary btn-full" disabled>✔ Zakończ turę</button>
         </div>
 
