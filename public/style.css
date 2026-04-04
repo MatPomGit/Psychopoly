@@ -219,7 +219,8 @@ html, body {
    SETUP SCREENS (local + online)
    ============================================================ */
 #screen-local-setup,
-#screen-online-lobby {
+#screen-online-lobby,
+#screen-achievements {
   flex-direction: column;
   align-items: center;
   justify-content: center;
@@ -238,6 +239,47 @@ html, body {
   font-size: 1.5rem;
   margin-bottom: 24px;
   color: var(--teal-light);
+}
+.achievements-card {
+  width: min(760px, 96vw);
+}
+.achievements-summary {
+  margin-bottom: 12px;
+  font-size: .85rem;
+  opacity: .9;
+}
+.achievements-list {
+  display: grid;
+  gap: 8px;
+  max-height: min(52vh, 460px);
+  overflow: auto;
+  padding-right: 4px;
+}
+.achievement-item {
+  background: rgba(255,255,255,.07);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.achievement-item.locked { opacity: .66; }
+.achievement-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+}
+.achievement-name { font-weight: 700; }
+.achievement-desc {
+  font-size: .79rem;
+  opacity: .85;
+  margin-top: 4px;
+}
+.season-journal-preview {
+  margin-top: 12px;
+  border-top: 1px solid rgba(255,255,255,.16);
+  padding-top: 10px;
+  font-size: .82rem;
+  color: var(--text-secondary-dark-bg);
 }
 
 .form-group { margin-bottom: 16px; }
@@ -1661,6 +1703,12 @@ body.performance-mode * {
   box-shadow: var(--shadow);
   animation: toastIn .3s ease;
   border-left: 3px solid var(--teal-light);
+}
+.toast-subtle {
+  background: rgba(10, 21, 39, .92);
+  border-left-color: #f1c40f;
+  font-size: .8rem;
+  opacity: .94;
 }
 @keyframes toastIn {
   from { opacity: 0; transform: translateY(20px); }
