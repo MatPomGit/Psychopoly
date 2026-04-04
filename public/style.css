@@ -1212,6 +1212,9 @@ html, body {
   color: var(--teal-light);
   font-weight: 700;
 }
+.undo-status {
+  color: rgba(255,255,255,.8);
+}
 #actions-content .btn {
   position: relative;
 }

@@ -64,4 +64,5 @@ window.PSYCHOPOLY_DEFAULT_CONFIG = {
   theme: 'classic',      // classic | dark | calm
   balancePreset: 'standard',
   actionGuidanceEnabled: true,
+  undoPerTurnLimit: 1,
 };
