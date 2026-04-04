@@ -1472,6 +1472,26 @@ body.quality-high #board {
   box-shadow: 0 calc(4px * var(--fx-intensity)) calc(24px * var(--fx-intensity)) rgba(0,0,0,.5);
 }
 
+/* Automatic performance mode (for lower-end devices) */
+body.performance-mode #board {
+  box-shadow: 0 1px 8px rgba(0,0,0,.28);
+}
+body.performance-mode .player-token,
+body.performance-mode .card-deck-pile,
+body.performance-mode .modal-box {
+  box-shadow: none !important;
+}
+body.performance-mode .player-token.active,
+body.performance-mode .onboarding-highlight,
+body.performance-mode .card-deck-pile.deck-active,
+body.performance-mode .dice-board-fx.playing,
+body.performance-mode #card-draw-fx.playing {
+  animation: none !important;
+}
+body.performance-mode * {
+  transition-duration: 0.12s !important;
+}
+
 /* Card modal */
 .card-modal-deck {
   font-size: .78rem;

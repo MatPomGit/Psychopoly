@@ -140,6 +140,27 @@ let onboardingHighlightedEl = null;
 let actionSuggestion = null;
 let selectedLocalMatchMode = DEFAULT_BALANCE_PRESET;
 let selectedOnlineMatchMode = DEFAULT_BALANCE_PRESET;
+let boardTransformRafId = null;
+let boardTransformDirty = false;
+let boardDelegatedHandlersBound = false;
+let lastUiSnapshot = null;
+const tokenNodeByPlayerId = new Map();
+const domCache = new Map();
+const runtimePerf = {
+  enabled: true,
+  samples: {
+    uiTotal: [],
+    tokens: [],
+    buildings: [],
+    ownership: [],
+    sidePanel: [],
+    actionButtons: [],
+  },
+  interactionSamples: [],
+  frameSamples: [],
+  lastFrameTime: 0,
+  perfModeReason: null,
+};
 
 const ONBOARDING_STEPS = [
   {
@@ -251,6 +272,64 @@ function shuffleArray(arr) {
   return a;
 }
 function rollDie() { return Math.floor(Math.random() * 6) + 1; }
+
+function getEl(id) {
+  if (domCache.has(id)) {
+    const cached = domCache.get(id);
+    if (cached && cached.isConnected) return cached;
+    domCache.delete(id);
+  }
+  const el = document.getElementById(id);
+  if (el) domCache.set(id, el);
+  return el;
+}
+
+function pushPerfSample(bucket, value, max = 90) {
+  if (!runtimePerf.enabled || !runtimePerf.samples[bucket]) return;
+  const arr = runtimePerf.samples[bucket];
+  arr.push(value);
+  if (arr.length > max) arr.shift();
+}
+
+function pushArraySample(target, value, max = 90) {
+  if (!runtimePerf.enabled || !Array.isArray(target)) return;
+  target.push(value);
+  if (target.length > max) target.shift();
+}
+
+function withPerfMetric(bucket, fn) {
+  const start = performance.now();
+  const result = fn();
+  pushPerfSample(bucket, performance.now() - start);
+  return result;
+}
+
+function avg(arr) {
+  if (!arr || !arr.length) return 0;
+  return arr.reduce((sum, n) => sum + n, 0) / arr.length;
+}
+
+function p95(arr) {
+  if (!arr || !arr.length) return 0;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95));
+  return sorted[idx];
+}
+
+function reportRuntimePerf() {
+  const rows = Object.entries(runtimePerf.samples).map(([name, arr]) => ({
+    metric: name,
+    avgMs: Number(avg(arr).toFixed(2)),
+    p95Ms: Number(p95(arr).toFixed(2)),
+    samples: arr.length,
+  }));
+  const interactionAvg = Number(avg(runtimePerf.interactionSamples).toFixed(2));
+  const interactionP95 = Number(p95(runtimePerf.interactionSamples).toFixed(2));
+  console.table(rows);
+  if (runtimePerf.interactionSamples.length) {
+    console.info('[Perf] interaction latency ms', { avg: interactionAvg, p95: interactionP95, samples: runtimePerf.interactionSamples.length });
+  }
+}
 
 function showToast(msg, duration = 2800) {
   const el = document.createElement('div');
@@ -439,6 +518,58 @@ function applySettings() {
   document.documentElement.classList.remove('theme-preload-classic', 'theme-preload-dark', 'theme-preload-calm');
   document.body.classList.remove('quality-low', 'quality-medium', 'quality-high');
   document.body.classList.add(`quality-${gameSettings.renderQuality || 'high'}`);
+  document.body.classList.toggle('performance-mode', !!gameSettings.performanceModeActive);
+}
+
+function detectPerformanceModeCandidate() {
+  const hc = navigator.hardwareConcurrency || 4;
+  const mem = navigator.deviceMemory || 4;
+  const saveData = !!navigator.connection?.saveData;
+  const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const shouldEnable = hc <= 4 || mem <= 4 || saveData || prefersReducedMotion;
+  let reason = null;
+  if (saveData) reason = 'save-data';
+  else if (prefersReducedMotion) reason = 'reduced-motion';
+  else if (mem <= 4) reason = 'low-memory';
+  else if (hc <= 4) reason = 'low-cpu';
+  return { shouldEnable, reason };
+}
+
+function applyAutomaticPerformanceMode() {
+  const { shouldEnable, reason } = detectPerformanceModeCandidate();
+  gameSettings.performanceModeActive = shouldEnable;
+  runtimePerf.perfModeReason = shouldEnable ? reason : null;
+  if (!shouldEnable) return;
+  if (gameSettings.renderQuality === 'high') gameSettings.renderQuality = 'medium';
+  gameSettings.boardFxIntensity = Math.min(gameSettings.boardFxIntensity || 1, 0.85);
+  gameSettings.animationSpeed = Math.min(gameSettings.animationSpeed || 1, 0.9);
+}
+
+function setupRuntimePerformanceMonitoring() {
+  if (!runtimePerf.enabled) return;
+  let interactionStart = 0;
+  const startInteraction = () => { interactionStart = performance.now(); };
+  const endInteraction = () => {
+    if (!interactionStart) return;
+    requestAnimationFrame(() => {
+      pushArraySample(runtimePerf.interactionSamples, performance.now() - interactionStart);
+      interactionStart = 0;
+    });
+  };
+  window.addEventListener('pointerdown', startInteraction, { passive: true });
+  window.addEventListener('keydown', startInteraction, { passive: true });
+  window.addEventListener('pointerup', endInteraction, { passive: true });
+  window.addEventListener('keyup', endInteraction, { passive: true });
+
+  const frameLoop = (ts) => {
+    if (runtimePerf.lastFrameTime) {
+      const delta = ts - runtimePerf.lastFrameTime;
+      pushArraySample(runtimePerf.frameSamples, delta, 120);
+    }
+    runtimePerf.lastFrameTime = ts;
+    requestAnimationFrame(frameLoop);
+  };
+  requestAnimationFrame(frameLoop);
 }
 
 function isActionGuidanceEnabled() {
@@ -573,9 +704,20 @@ function openSettingsModal() {
 }
 
 function applyBoardTransform() {
-  const board = document.getElementById('board');
+  const board = getEl('board');
   if (!board) return;
   board.style.transform = `translate(${boardPanX}px, ${boardPanY}px) scale(${boardScale}) rotate(${boardRotation}deg)`;
+}
+
+function scheduleBoardTransform() {
+  boardTransformDirty = true;
+  if (boardTransformRafId) return;
+  boardTransformRafId = requestAnimationFrame(() => {
+    boardTransformRafId = null;
+    if (!boardTransformDirty) return;
+    boardTransformDirty = false;
+    applyBoardTransform();
+  });
 }
 
 function clampBoardScale(value) {
@@ -585,7 +727,7 @@ function clampBoardScale(value) {
 function setBoardScale(nextScale) {
   boardScale = clampBoardScale(nextScale);
   document.documentElement.style.setProperty('--board-scale', String(boardScale));
-  applyBoardTransform();
+  scheduleBoardTransform();
 }
 
 function setupBoardViewportControls() {
@@ -598,15 +740,15 @@ function setupBoardViewportControls() {
 
   if (zoomIn) zoomIn.addEventListener('click', () => setBoardScale(boardScale + 0.15));
   if (zoomOut) zoomOut.addEventListener('click', () => setBoardScale(boardScale - 0.15));
-  if (rotLeft) rotLeft.addEventListener('click', () => { boardRotation -= 15; applyBoardTransform(); });
-  if (rotRight) rotRight.addEventListener('click', () => { boardRotation += 15; applyBoardTransform(); });
+  if (rotLeft) rotLeft.addEventListener('click', () => { boardRotation -= 15; scheduleBoardTransform(); });
+  if (rotRight) rotRight.addEventListener('click', () => { boardRotation += 15; scheduleBoardTransform(); });
   if (reset) reset.addEventListener('click', () => {
     boardScale = 1;
     document.documentElement.style.setProperty('--board-scale', '1');
     boardRotation = 0;
     boardPanX = 0;
     boardPanY = 0;
-    applyBoardTransform();
+    scheduleBoardTransform();
   });
 
   if (!boardArea) return;
@@ -625,7 +767,7 @@ function setupBoardViewportControls() {
     if (!isDraggingBoard) return;
     boardPanX = e.clientX - dragStartX;
     boardPanY = e.clientY - dragStartY;
-    applyBoardTransform();
+    scheduleBoardTransform();
   });
 }
 
@@ -757,7 +899,9 @@ function renderOnboardingStep() {
 document.addEventListener('DOMContentLoaded', () => {
   initAudioSystem();
   loadSettings();
+  applyAutomaticPerformanceMode();
   applySettings();
+  setupRuntimePerformanceMonitoring();
   setupMenuHandlers();
   setupLocalSetupHandlers();
   setupOnlineLobbyHandlers();
@@ -766,6 +910,10 @@ document.addEventListener('DOMContentLoaded', () => {
   bindGlobalButtonSfx();
   setupBoardViewportControls();
   showScreen('screen-menu');
+  window.PsychopolyPerf = {
+    report: reportRuntimePerf,
+    state: runtimePerf,
+  };
 });
 
 function initAudioSystem() {
@@ -1874,8 +2022,10 @@ function sendOnlineAction(type, data = {}) {
 // BOARD RENDERING
 // ============================================================
 function renderBoard() {
-  const board = document.getElementById('board');
+  const board = getEl('board');
+  if (!board) return;
   board.innerHTML = '';
+  const fragment = document.createDocumentFragment();
 
   ACTIVE_BOARD_SPACES.forEach(space => {
     const pos = GRID_POSITIONS[space.id];
@@ -1911,17 +2061,7 @@ function renderBoard() {
     tokenLayer.id = `tokens-${space.id}`;
     cell.appendChild(tokenLayer);
 
-    cell.addEventListener('mouseenter', (e) => {
-      showSpaceTooltip(space, cell);
-      showSpacePreview(space, 'hover');
-    });
-    cell.addEventListener('mouseleave', () => hideSpaceTooltip());
-    cell.addEventListener('click', () => {
-      showSpacePreview(space, 'click');
-      if (isCompactPreviewViewport()) openSpacePreviewModal(space);
-    });
-
-    board.appendChild(cell);
+    fragment.appendChild(cell);
   });
 
   // Center piece
@@ -1952,10 +2092,37 @@ function renderBoard() {
     <div class="center-phase" id="center-phase"></div>
     <div class="turn-player-stats" id="turn-player-stats"></div>
   `;
-  board.appendChild(center);
+  fragment.appendChild(center);
+  board.appendChild(fragment);
+
+  if (!boardDelegatedHandlersBound) {
+    boardDelegatedHandlersBound = true;
+    board.addEventListener('mouseover', (event) => {
+      const cell = event.target.closest('.board-space');
+      if (!cell || !board.contains(cell)) return;
+      const spaceId = Number(cell.dataset.spaceId);
+      const space = ACTIVE_BOARD_SPACES[spaceId];
+      if (!space) return;
+      showSpaceTooltip(space, cell);
+      showSpacePreview(space, 'hover');
+    });
+    board.addEventListener('mouseout', (event) => {
+      const leavingBoard = !event.relatedTarget || !event.relatedTarget.closest('#board');
+      if (leavingBoard) hideSpaceTooltip();
+    });
+    board.addEventListener('click', (event) => {
+      const cell = event.target.closest('.board-space');
+      if (!cell || !board.contains(cell)) return;
+      const spaceId = Number(cell.dataset.spaceId);
+      const space = ACTIVE_BOARD_SPACES[spaceId];
+      if (!space) return;
+      showSpacePreview(space, 'click');
+      if (isCompactPreviewViewport()) openSpacePreviewModal(space);
+    });
+  }
 
   // Card deck click handlers
-  document.getElementById('insight-deck').addEventListener('click', () => {
+  getEl('insight-deck').addEventListener('click', () => {
     if (!localGame) return;
     const gs = localGame;
     if (gs.phase !== 'card-select') return;
@@ -1969,7 +2136,7 @@ function renderBoard() {
       sendOnlineAction('draw-card', { deck: 'insight' });
     }
   });
-  document.getElementById('session-deck').addEventListener('click', () => {
+  getEl('session-deck').addEventListener('click', () => {
     if (!localGame) return;
     const gs = localGame;
     if (gs.phase !== 'card-select') return;
@@ -1983,7 +2150,7 @@ function renderBoard() {
       sendOnlineAction('draw-card', { deck: 'session' });
     }
   });
-  applyBoardTransform();
+  scheduleBoardTransform();
 }
 
 function cornerContent(space) {
@@ -2091,16 +2258,15 @@ function hideSpaceTooltip() {
 }
 
 function animateBoardFocus(fromSpaceId, toSpaceId) {
-  const fromEl = document.getElementById(`space-${fromSpaceId}`);
-  const toEl = document.getElementById(`space-${toSpaceId}`);
-  const boardArea = document.getElementById('board-area');
+  const fromEl = getEl(`space-${fromSpaceId}`);
+  const toEl = getEl(`space-${toSpaceId}`);
+  const boardArea = getEl('board-area');
   if (!fromEl || !toEl || !boardArea) return;
 
   [fromEl, toEl].forEach((el, idx) => {
     setTimeout(() => {
       el.classList.remove('space-focus-pulse');
-      void el.offsetWidth;
-      el.classList.add('space-focus-pulse');
+      requestAnimationFrame(() => el.classList.add('space-focus-pulse'));
     }, idx * 450);
   });
 
@@ -2114,24 +2280,22 @@ function animateBoardFocus(fromSpaceId, toSpaceId) {
 }
 
 function animateCardDraw(deck) {
-  const fx = document.getElementById('card-draw-fx');
+  const fx = getEl('card-draw-fx');
   if (!fx) return;
   fx.textContent = deck === 'insight' ? '🟧 Karta Szansy' : '🟦 Karta Społeczności';
   fx.classList.remove('playing');
-  void fx.offsetWidth;
-  fx.classList.add('playing');
+  requestAnimationFrame(() => fx.classList.add('playing'));
 }
 
 function animateDiceOnBoard(d1, d2) {
-  const fx = document.getElementById('dice-board-fx');
-  const die1 = document.getElementById('board-die1');
-  const die2 = document.getElementById('board-die2');
+  const fx = getEl('dice-board-fx');
+  const die1 = getEl('board-die1');
+  const die2 = getEl('board-die2');
   if (!fx || !die1 || !die2) return;
   die1.textContent = DICE_FACES[d1] || '⚀';
   die2.textContent = DICE_FACES[d2] || '⚀';
   fx.classList.remove('playing');
-  void fx.offsetWidth;
-  fx.classList.add('playing');
+  requestAnimationFrame(() => fx.classList.add('playing'));
 }
 
 // ============================================================
@@ -2139,6 +2303,19 @@ function animateDiceOnBoard(d1, d2) {
 // ============================================================
 function updateUI(gs) {
   if (!gs) return;
+  const updateStart = performance.now();
+  const uiSnapshot = {
+    phase: gs.phase,
+    currentPlayerIndex: gs.currentPlayerIndex,
+    dice: `${gs.dice[0]}-${gs.dice[1]}`,
+    positions: gs.players.map((p) => p.position).join(','),
+    playerStats: gs.players.map((p) => `${p.money}|${p.prestige}|${p.energy}|${p.ethics}|${p.burnout}|${p.bankrupt ? 1 : 0}|${p.inJail ? 1 : 0}|${(p.properties || []).length}`).join(';'),
+    properties: Object.entries(gs.properties)
+      .map(([spaceId, ps]) => `${spaceId}:${ps.owner}-${ps.houses || 0}-${ps.hotel ? 1 : 0}-${ps.mortgaged ? 1 : 0}`)
+      .join('|'),
+    logTop: (gs.log && gs.log[0] && gs.log[0].ts) || 0,
+    logLen: gs.log ? gs.log.length : 0,
+  };
 
   const prevPositions = movedPlayersLastUpdate.length
     ? movedPlayersLastUpdate
@@ -2149,14 +2326,24 @@ function updateUI(gs) {
     animateBoardFocus(prevPositions[movedIdx] ?? moved.position, moved.position);
   }
 
-  renderTokens(gs);
-  renderBuildingIndicators(gs);
-  renderOwnershipRings(gs);
-  updateSidePanel(gs);
-  updateTurnQueue(gs);
-  updateActionButtons(gs);
+  if (!lastUiSnapshot || lastUiSnapshot.positions !== uiSnapshot.positions || animatingPlayerData) {
+    withPerfMetric('tokens', () => renderTokens(gs));
+  }
+  if (!lastUiSnapshot || lastUiSnapshot.properties !== uiSnapshot.properties) {
+    withPerfMetric('buildings', () => renderBuildingIndicators(gs));
+    withPerfMetric('ownership', () => renderOwnershipRings(gs));
+  }
+  if (!lastUiSnapshot || lastUiSnapshot.playerStats !== uiSnapshot.playerStats || lastUiSnapshot.properties !== uiSnapshot.properties || lastUiSnapshot.logTop !== uiSnapshot.logTop || lastUiSnapshot.logLen !== uiSnapshot.logLen) {
+    withPerfMetric('sidePanel', () => updateSidePanel(gs));
+  }
+  if (!lastUiSnapshot || lastUiSnapshot.currentPlayerIndex !== uiSnapshot.currentPlayerIndex || lastUiSnapshot.playerStats !== uiSnapshot.playerStats) {
+    updateTurnQueue(gs);
+  }
+  withPerfMetric('actionButtons', () => updateActionButtons(gs));
   updateCenterInfo(gs);
   movedPlayersLastUpdate = gs.players.map(p => p.position);
+  lastUiSnapshot = uiSnapshot;
+  pushPerfSample('uiTotal', performance.now() - updateStart);
 
   if (gs.phase === 'end' && gs.winner !== null) {
     setTimeout(() => showGameOver(gs), 600);
@@ -2174,24 +2361,28 @@ function updateUI(gs) {
   }
 
   if (curIsAI) scheduleAiTurnIfNeeded(gs);
+  if (runtimePerf.samples.uiTotal.length && runtimePerf.samples.uiTotal.length % 30 === 0) reportRuntimePerf();
 }
 
 // ============================================================
 // TOKENS
 // ============================================================
 function renderTokens(gs) {
-  // Clear all token layers
-  document.querySelectorAll('.token-layer').forEach(tl => { tl.innerHTML = ''; });
-
-  gs.players.forEach(player => {
+  const usedPlayerIds = new Set();
+  gs.players.forEach((player) => {
     if (player.bankrupt) return;
+    usedPlayerIds.add(player.id);
     // Use animation position when this player is mid-move
     const displayPos = (animatingPlayerData && animatingPlayerData.playerId === player.id)
       ? animatingPlayerData.animPos
       : player.position;
-    const layer = document.getElementById(`tokens-${displayPos}`);
+    const layer = getEl(`tokens-${displayPos}`);
     if (!layer) return;
-    const token = document.createElement('div');
+    let token = tokenNodeByPlayerId.get(player.id);
+    if (!token) {
+      token = document.createElement('div');
+      tokenNodeByPlayerId.set(player.id, token);
+    }
     token.className = 'player-token';
     if (player.id === gs.currentPlayerIndex) token.classList.add('active');
     token.style.backgroundColor = player.color;
@@ -2200,14 +2391,23 @@ function renderTokens(gs) {
     token.title = `${player.name} — ${player.money} zł`;
     layer.appendChild(token);
   });
+
+  tokenNodeByPlayerId.forEach((token, playerId) => {
+    if (!usedPlayerIds.has(playerId)) {
+      token.remove();
+      tokenNodeByPlayerId.delete(playerId);
+    }
+  });
 }
 
 function renderBuildingIndicators(gs) {
-  // Clear existing
-  document.querySelectorAll('.building-indicator').forEach(el => { el.innerHTML = ''; });
+  ACTIVE_BOARD_SPACES.forEach((space) => {
+    const indEl = getEl(`buildings-${space.id}`);
+    if (indEl) indEl.textContent = '';
+  });
 
   Object.entries(gs.properties).forEach(([spaceId, propState]) => {
-    const indEl = document.getElementById(`buildings-${spaceId}`);
+    const indEl = getEl(`buildings-${spaceId}`);
     if (!indEl) return;
     if (propState.hotel) {
       const dot = document.createElement('div');
@@ -2249,11 +2449,11 @@ function updateCenterInfo(gs) {
   const cur = gs.players[gs.currentPlayerIndex];
   if (!cur) return;
 
-  const centerPlayer = document.getElementById('center-player');
-  const centerPhase  = document.getElementById('center-phase');
-  const centerDice   = document.getElementById('center-dice');
-  const cd1 = document.getElementById('center-die1');
-  const cd2 = document.getElementById('center-die2');
+  const centerPlayer = getEl('center-player');
+  const centerPhase  = getEl('center-phase');
+  const centerDice   = getEl('center-dice');
+  const cd1 = getEl('center-die1');
+  const cd2 = getEl('center-die2');
 
   if (centerPlayer) {
     centerPlayer.textContent = `Tura: ${cur.name}`;
@@ -2263,7 +2463,7 @@ function updateCenterInfo(gs) {
     centerPhase.textContent = PHASE_LABELS[gs.phase] || gs.phase;
   }
 
-  const turnStats = document.getElementById('turn-player-stats');
+  const turnStats = getEl('turn-player-stats');
   if (turnStats) {
     const cardCount = cur.getOutOfJailCards || 0;
     const ownedCount = (cur.properties || []).length;
@@ -2286,17 +2486,19 @@ function updateCenterInfo(gs) {
   }
 
   // Update side-panel die display too
-  document.getElementById('die1').textContent = gs.dice[0] > 0 ? DICE_FACES[gs.dice[0]] : '?';
-  document.getElementById('die2').textContent = gs.dice[1] > 0 ? DICE_FACES[gs.dice[1]] : '?';
+  const sideDie1 = getEl('die1');
+  const sideDie2 = getEl('die2');
+  if (sideDie1) sideDie1.textContent = gs.dice[0] > 0 ? DICE_FACES[gs.dice[0]] : '?';
+  if (sideDie2) sideDie2.textContent = gs.dice[1] > 0 ? DICE_FACES[gs.dice[1]] : '?';
 
   // Card deck counts and active state
-  const insightCountEl = document.getElementById('insight-deck-count');
-  const sessionCountEl = document.getElementById('session-deck-count');
+  const insightCountEl = getEl('insight-deck-count');
+  const sessionCountEl = getEl('session-deck-count');
   if (insightCountEl) insightCountEl.textContent = (gs.insightCards ? gs.insightCards.length : 0) + ' kart';
   if (sessionCountEl) sessionCountEl.textContent = (gs.sessionCards ? gs.sessionCards.length : 0) + ' kart';
 
-  const insightDeckEl = document.getElementById('insight-deck');
-  const sessionDeckEl = document.getElementById('session-deck');
+  const insightDeckEl = getEl('insight-deck');
+  const sessionDeckEl = getEl('session-deck');
   const insightActive = gs.phase === 'card-select' && gs.pendingCardDeck === 'insight';
   const sessionActive = gs.phase === 'card-select' && gs.pendingCardDeck === 'session';
   if (insightDeckEl) insightDeckEl.classList.toggle('deck-active', insightActive);
@@ -2374,9 +2576,10 @@ function updateTurnStatusPanel(gs, { cur, myTurn, curIsAI, guidance }) {
 // TURN QUEUE BAR
 // ============================================================
 function updateTurnQueue(gs) {
-  const el = document.getElementById('turn-queue');
+  const el = getEl('turn-queue');
   if (!el) return;
   el.innerHTML = '';
+  const fragment = document.createDocumentFragment();
   const n = gs.players.length;
   for (let i = 0; i < n; i++) {
     const idx = (gs.currentPlayerIndex + i) % n;
@@ -2395,15 +2598,16 @@ function updateTurnQueue(gs) {
     item.addEventListener('mouseenter', () => showPlayerStatsTooltip(player, item));
     item.addEventListener('mouseleave', () => hidePlayerStatsTooltip());
 
-    el.appendChild(item);
+    fragment.appendChild(item);
 
     if (i < n - 1) {
       const sep = document.createElement('div');
       sep.className = 'tq-sep';
       sep.textContent = '›';
-      el.appendChild(sep);
+      fragment.appendChild(sep);
     }
   }
+  el.appendChild(fragment);
 }
 
 function showPlayerStatsTooltip(player, anchorEl) {
@@ -2438,9 +2642,10 @@ function hidePlayerStatsTooltip() {
 }
 
 function renderPlayersPanel(gs) {
-  const list = document.getElementById('players-list-panel');
+  const list = getEl('players-list-panel');
   if (!list) return;
   list.innerHTML = '';
+  const fragment = document.createDocumentFragment();
   gs.players.forEach((player, i) => {
     const card = document.createElement('div');
     card.className = `player-card-panel${i === gs.currentPlayerIndex ? ' active-turn' : ''}${player.bankrupt ? ' bankrupt' : ''}`;
@@ -2462,14 +2667,16 @@ function renderPlayersPanel(gs) {
       </div>
       <div class="player-status-row">${statusText} · <span class="stat-energy">🔋${player.energy}</span> <span class="stat-ethics">⚖️${player.ethics}</span> <span class="stat-burnout">🔥${player.burnout}</span> · Pole: ${player.position}</div>
       <div class="player-props-mini">${propDots}</div>`;
-    list.appendChild(card);
+    fragment.appendChild(card);
   });
+  list.appendChild(fragment);
 }
 
 function renderPropertiesPanel(gs) {
-  const panel = document.getElementById('properties-panel');
+  const panel = getEl('properties-panel');
   if (!panel) return;
   panel.innerHTML = '';
+  const fragment = document.createDocumentFragment();
 
   const groups = {};
   Object.entries(GROUP_COLORS).forEach(([g]) => { groups[g] = []; });
@@ -2508,14 +2715,15 @@ function renderPropertiesPanel(gs) {
         <span class="prop-row-price">${space.price || ''}${space.price ? ' zł' : ''}</span>`;
       groupDiv.appendChild(row);
     });
-    panel.appendChild(groupDiv);
+    fragment.appendChild(groupDiv);
   });
+  panel.appendChild(fragment);
 
   if (!panel.innerHTML) panel.innerHTML = '<div style="opacity:.5;font-size:.8rem;padding:8px">Brak kupionych własności.</div>';
 }
 
 function renderLogPanel(gs) {
-  const list = document.getElementById('log-list');
+  const list = getEl('log-list');
   if (!list) return;
   const filterToTypes = {
     all: null,
@@ -2525,6 +2733,7 @@ function renderLogPanel(gs) {
   };
   const allowedTypes = filterToTypes[logFilterMode] || null;
   list.innerHTML = '';
+  const fragment = document.createDocumentFragment();
   gs.log
     .filter((entry) => !allowedTypes || allowedTypes.includes(entry.type || classifyLogType(entry.text, entry.isTurn)))
     .forEach(entry => {
@@ -2532,8 +2741,9 @@ function renderLogPanel(gs) {
     const type = entry.type || classifyLogType(entry.text, entry.isTurn);
     div.className = `log-entry log-type-${type}${entry.isTurn ? ' log-turn' : ''}`;
     div.textContent = entry.text;
-    list.appendChild(div);
+    fragment.appendChild(div);
     });
+  list.appendChild(fragment);
 }
 
 // ============================================================
