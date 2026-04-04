@@ -131,6 +131,7 @@ let logFilterMode = 'all';
 const BALANCE_PRESETS = window.PSYCHOPOLY_BALANCE_PRESETS || {};
 const DEFAULT_BALANCE_PRESET = (window.PSYCHOPOLY_DEFAULT_CONFIG && window.PSYCHOPOLY_DEFAULT_CONFIG.balancePreset) || "standard";
 const MATCH_MODE_KEYS = ['szybka', 'standard', 'ekspercka'];
+const DEFAULT_MAX_UNDOS_PER_TURN = Math.max(0, Number((window.PSYCHOPOLY_DEFAULT_CONFIG && window.PSYCHOPOLY_DEFAULT_CONFIG.undoPerTurnLimit) ?? 1) || 1);
 let activeBalanceProfile = null;
 let ACTIVE_BOARD_SPACES = [...BOARD_SPACES];
 let ACTIVE_INSIGHT_CARDS = [...INSIGHT_CARDS];
@@ -298,6 +299,9 @@ function shuffleArray(arr) {
 }
 function rollDie() { return Math.floor(Math.random() * 6) + 1; }
 
+function deepCloneState(value) {
+  if (typeof structuredClone === 'function') return structuredClone(value);
+  return JSON.parse(JSON.stringify(value));
 function getEl(id) {
   if (domCache.has(id)) {
     const cached = domCache.get(id);
@@ -363,6 +367,90 @@ function showToast(msg, duration = 2800) {
   el.textContent = msg;
   document.getElementById('toast-container').appendChild(el);
   setTimeout(() => el.remove(), duration);
+}
+
+function initUndoState(gs) {
+  if (!gs) return;
+  const maxUndos = Number.isFinite(gs?.undo?.maxUndosPerTurn)
+    ? Math.max(0, Math.floor(gs.undo.maxUndosPerTurn))
+    : DEFAULT_MAX_UNDOS_PER_TURN;
+  gs.undo = {
+    snapshot: null,
+    message: 'Cofnięcie dostępne po bezpiecznej akcji.',
+    turnRef: gs.turn || 0,
+    undosUsedThisTurn: gs.undo?.undosUsedThisTurn || 0,
+    maxUndosPerTurn: maxUndos,
+  };
+}
+
+function resetUndoForTurn(gs, message = 'Cofnięcie dostępne po bezpiecznej akcji.') {
+  initUndoState(gs);
+  gs.undo.snapshot = null;
+  gs.undo.message = message;
+  gs.undo.turnRef = gs.turn;
+  gs.undo.undosUsedThisTurn = 0;
+}
+
+function snapshotActionState(gs, options = {}) {
+  if (!gs || gameMode !== 'local') return;
+  initUndoState(gs);
+  const opts = {
+    undoSafe: true,
+    blockedReason: '',
+    label: 'ostatniej akcji',
+    ...options,
+  };
+  gs.undo.turnRef = gs.turn;
+
+  if (!opts.undoSafe) {
+    gs.undo.snapshot = null;
+    gs.undo.message = opts.blockedReason || 'Tej akcji nie można cofnąć.';
+    return;
+  }
+  if (gs.undo.maxUndosPerTurn <= 0) {
+    gs.undo.snapshot = null;
+    gs.undo.message = 'Cofanie zostało wyłączone w konfiguracji.';
+    return;
+  }
+  const stateForSnapshot = deepCloneState(gs);
+  if (stateForSnapshot.undo) stateForSnapshot.undo.snapshot = null;
+  gs.undo.snapshot = stateForSnapshot;
+  gs.undo.message = `Możesz cofnąć ${opts.label}.`;
+}
+
+function getUndoAvailability(gs, myTurn, curIsAI) {
+  initUndoState(gs);
+  if (gameMode !== 'local') return { available: false, reason: 'Cofanie działa tylko w trybie lokalnym.' };
+  if (curIsAI) return { available: false, reason: 'Nie można cofać ruchów wykonanych przez AI.' };
+  if (!myTurn) return { available: false, reason: 'Cofnięcie działa tylko w Twojej turze.' };
+  if (gs.phase === 'end') return { available: false, reason: 'Gra jest zakończona.' };
+  if (gs.phase !== 'end-turn') return { available: false, reason: 'Cofnięcie jest dostępne tuż przed zakończeniem tury.' };
+  if (isAnimating) return { available: false, reason: 'Poczekaj na zakończenie animacji.' };
+  if (gs.undo.turnRef !== gs.turn) return { available: false, reason: 'Zacznij nową turę, aby znów cofać.' };
+  if (gs.undo.undosUsedThisTurn >= gs.undo.maxUndosPerTurn) {
+    return { available: false, reason: `Limit cofnięć na turę: ${gs.undo.maxUndosPerTurn}.` };
+  }
+  if (!gs.undo.snapshot) return { available: false, reason: gs.undo.message || 'Brak bezpiecznej akcji do cofnięcia.' };
+  return { available: true, reason: '' };
+}
+
+function doUndo(gs) {
+  if (!gs || gameMode !== 'local') return false;
+  const cur = gs.players[gs.currentPlayerIndex];
+  const availability = getUndoAvailability(gs, true, !!cur?.isAI);
+  if (!availability.available) {
+    showToast(availability.reason);
+    return false;
+  }
+  const restored = deepCloneState(gs.undo.snapshot);
+  initUndoState(restored);
+  restored.undo.snapshot = null;
+  restored.undo.undosUsedThisTurn = (gs.undo?.undosUsedThisTurn || 0) + 1;
+  restored.undo.turnRef = restored.turn;
+  restored.undo.message = 'Limit cofnięcia dla tej tury został wykorzystany.';
+  localGame = restored;
+  showToast('Cofnięto ostatnią bezpieczną akcję.');
+  return true;
 }
 
 function askPlayerChoice(message) {
@@ -1887,6 +1975,13 @@ function createGameState(playerConfigs, matchProfile) {
     pendingBuy:      null,
     rolledThisTurn:  false,
     analytics:       { snapshots: [], events: [] },
+    undo:            {
+      snapshot: null,
+      message: 'Cofnięcie dostępne po bezpiecznej akcji.',
+      turnRef: 0,
+      undosUsedThisTurn: 0,
+      maxUndosPerTurn: DEFAULT_MAX_UNDOS_PER_TURN,
+    },
   };
 }
 
@@ -1900,6 +1995,7 @@ function startLocalGame(playerConfigs, modeKey = DEFAULT_BALANCE_PRESET) {
   selectedLocalMatchMode = profile.name;
   applyBalanceProfile(profile);
   localGame  = createGameState(playerConfigs, profile);
+  resetUndoForTurn(localGame, 'Cofnięcie dostępne po bezpiecznej akcji.');
   lastLocalPlayerConfigs = playerConfigs.map((p) => ({ ...p }));
   captureRoundSnapshot(localGame, 'start');
   currentRunStats = createRunStats();
@@ -2016,6 +2112,10 @@ function setupGameHandlers() {
     if (!localGame) return;
     if (isAnimating) return;
     if (gameMode === 'local') {
+      snapshotActionState(localGame, {
+        undoSafe: false,
+        blockedReason: 'Rzut kostką jest losowy i ujawniony — nie można go cofnąć.',
+      });
       doRoll(localGame);
       updateUI(localGame);
     } else {
@@ -2027,6 +2127,7 @@ function setupGameHandlers() {
   document.getElementById('btn-pay-jail').addEventListener('click', () => {
     if (!localGame) return;
     if (gameMode === 'local') {
+      snapshotActionState(localGame, { label: 'opłacenie wyjścia z Izolacji' });
       doPayJail(localGame);
       updateUI(localGame);
     } else { sendOnlineAction('pay-jail'); }
@@ -2036,9 +2137,18 @@ function setupGameHandlers() {
   document.getElementById('btn-jail-card').addEventListener('click', () => {
     if (!localGame) return;
     if (gameMode === 'local') {
+      snapshotActionState(localGame, { label: 'użycie karty wyjścia z Izolacji' });
       doUseJailCard(localGame);
       updateUI(localGame);
     } else { sendOnlineAction('use-jail-card'); }
+  });
+
+  // Undo (local safe action only)
+  document.getElementById('btn-undo').addEventListener('click', () => {
+    if (!localGame) return;
+    if (gameMode !== 'local') return;
+    doUndo(localGame);
+    if (localGame) updateUI(localGame);
   });
 
   // End turn
@@ -2067,6 +2177,10 @@ function setupGameHandlers() {
     if (!localGame) return;
     closeModal('modal-card');
     if (gameMode === 'local') {
+      snapshotActionState(localGame, {
+        undoSafe: false,
+        blockedReason: 'Karta została już ujawniona — cofnięcie jest zablokowane.',
+      });
       doCardOk(localGame);
       updateUI(localGame);
     } else { sendOnlineAction('card-ok'); }
@@ -2078,6 +2192,7 @@ function setupGameHandlers() {
     clearActionSuggestion();
     closeModal('modal-buy');
     if (gameMode === 'local') {
+      snapshotActionState(localGame, { label: 'zakup aktywa' });
       doBuy(localGame);
       updateUI(localGame);
     } else { sendOnlineAction('buy'); }
@@ -2089,6 +2204,7 @@ function setupGameHandlers() {
     clearActionSuggestion();
     closeModal('modal-buy');
     if (gameMode === 'local') {
+      snapshotActionState(localGame, { label: 'pominięcie zakupu' });
       doPassBuy(localGame);
       updateUI(localGame);
     } else { sendOnlineAction('pass-buy'); }
@@ -2335,6 +2451,10 @@ function renderBoard() {
     if (gs.pendingCardDeck !== 'insight') { showToast('Ciągnij z właściwego stosu kart!'); return; }
     const player = gs.players[gs.currentPlayerIndex];
     if (gameMode === 'local') {
+      snapshotActionState(gs, {
+        undoSafe: false,
+        blockedReason: 'Dobrana karta została ujawniona publicznie — nie można cofnąć.',
+      });
       doDrawCard(gs, player, 'insight');
       gs.pendingCardDeck = null;
       updateUI(gs);
@@ -2349,6 +2469,10 @@ function renderBoard() {
     if (gs.pendingCardDeck !== 'session') { showToast('Ciągnij z właściwego stosu kart!'); return; }
     const player = gs.players[gs.currentPlayerIndex];
     if (gameMode === 'local') {
+      snapshotActionState(gs, {
+        undoSafe: false,
+        blockedReason: 'Dobrana karta została ujawniona publicznie — nie można cofnąć.',
+      });
       doDrawCard(gs, player, 'session');
       gs.pendingCardDeck = null;
       updateUI(gs);
@@ -3035,6 +3159,7 @@ function updateActionButtons(gs) {
     'btn-roll',
     'btn-pay-jail',
     'btn-jail-card',
+    'btn-undo',
     'btn-end-turn',
     'btn-build',
     'btn-mortgage',
@@ -3117,6 +3242,15 @@ function updateActionButtons(gs) {
   else if (!myTurn) setDisabledReason(btnEnd, 'To nie jest Twoja tura.');
   else if (isAnimating) setDisabledReason(btnEnd, 'Poczekaj na zakończenie animacji ruchu.');
   else setDisabledReason(btnEnd, '');
+
+  const btnUndo = document.getElementById('btn-undo');
+  const undoAvailability = getUndoAvailability(gs, myTurn, curIsAI);
+  btnUndo.style.display = gameMode === 'local' ? 'flex' : 'none';
+  btnUndo.disabled = !undoAvailability.available;
+  setDisabledReason(btnUndo, undoAvailability.reason);
+  if (phaseInfo && gameMode === 'local' && !undoAvailability.available && !curIsAI) {
+    phaseInfo.innerHTML += `<br><span class="undo-status">↩ Cofnij: ${undoAvailability.reason}</span>`;
+  }
 
   // Build / Mortgage (available during rolling or end-turn on your turn)
   const canManage = myTurn && (phase === 'rolling' || phase === 'end-turn');
@@ -3707,6 +3841,7 @@ function doEndTurn(gs) {
   gs.turn++;
   gs.phase              = 'rolling';
   gs.rolledThisTurn     = false;
+  resetUndoForTurn(gs, 'Nowa tura: wykonaj akcję, aby odblokować cofnięcie.');
   if (metaProgress) metaProgress.stats.turnsEnded++;
 
   const active = gs.players.filter(p => !p.bankrupt);
@@ -4075,6 +4210,7 @@ function openBuildModal(gs) {
       const action  = btn.dataset.action;
       const spaceId = parseInt(btn.dataset.id);
       if (gameMode === 'local') {
+        snapshotActionState(gs, { label: action === 'build' ? 'rozwój aktywa' : 'sprzedaż certyfikatu' });
         if (action === 'build') doBuildHouse(gs, player, spaceId);
         else                    doSellHouse(gs, player, spaceId);
         closeModal('modal-build');
@@ -4198,6 +4334,7 @@ function openMortgageModal(gs) {
       const action  = btn.dataset.action;
       const spaceId = parseInt(btn.dataset.id);
       if (gameMode === 'local') {
+        snapshotActionState(gs, { label: action === 'mortgage' ? 'zastawienie aktywa' : 'odkupienie aktywa z zastawu' });
         if (action === 'mortgage')   doMortgage(gs, player, spaceId);
         else                         doUnmortgage(gs, player, spaceId);
         closeModal('modal-mortgage');
