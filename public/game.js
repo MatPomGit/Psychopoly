@@ -29,6 +29,8 @@ const AI_CASH_BUFFER = 300;
 const AI_DECISION_DELAY_MS = 850;
 const AI_PERSONALITY_TYPES = ['conservative', 'balanced', 'aggressive'];
 const ONBOARDING_SEEN_KEY = 'psychopoly-onboarding-seen';
+const META_PROGRESS_KEY = 'psychopoly-meta-progress-v1';
+const SEASON_JOURNAL_KEY = 'psychopoly-season-journal-v1';
 
 const DICE_FACES = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
 
@@ -138,6 +140,29 @@ let onboardingActive = false;
 let onboardingShownThisSession = false;
 let onboardingHighlightedEl = null;
 let actionSuggestion = null;
+let metaProgress = null;
+let seasonJournal = null;
+let currentRunStats = null;
+let endgameMetaRecorded = false;
+
+const ACHIEVEMENTS = [
+  { id: 'first_steps', name: 'Pierwsze kroki', description: 'Ukończ 1 partię.', condition: (ctx) => ctx.profile.stats.gamesPlayed >= 1 },
+  { id: 'returning_mind', name: 'Powracający umysł', description: 'Ukończ 5 partii.', condition: (ctx) => ctx.profile.stats.gamesPlayed >= 5 },
+  { id: 'weekend_clinic', name: 'Weekendowa praktyka', description: 'Ukończ 12 partii.', condition: (ctx) => ctx.profile.stats.gamesPlayed >= 12 },
+  { id: 'first_win', name: 'Pierwsza wygrana', description: 'Wygraj partię.', condition: (ctx) => ctx.playerWon },
+  { id: 'winning_rhythm', name: 'Rytm zwycięstw', description: 'Wygraj 3 partie z rzędu.', condition: (ctx) => ctx.profile.stats.bestWinStreak >= 3 },
+  { id: 'ethics_guardian', name: 'Wysoka etyka do końca', description: 'Zakończ partię z etyką co najmniej 80.', condition: (ctx) => ctx.player.ethics >= 80 },
+  { id: 'zero_bankruptcies', name: '0 bankructw', description: 'Ukończ partię bez żadnego bankructwa gracza.', condition: (ctx) => ctx.run.bankruptPlayers === 0 },
+  { id: 'survivor', name: 'Niezłomny', description: 'Wygraj bez bankructwa swojej postaci.', condition: (ctx) => ctx.playerWon && !ctx.player.bankrupt },
+  { id: 'supervision_master', name: 'Mistrz superwizji', description: 'Zdobądź łącznie 12 punktów superwizji.', condition: (ctx) => ctx.profile.stats.totalSupervisionGained >= 12 },
+  { id: 'property_hustle', name: 'Kolekcjoner aktywów', description: 'Kup łącznie 15 aktywów.', condition: (ctx) => ctx.profile.stats.totalPropertiesBought >= 15 },
+  { id: 'card_scholar', name: 'Czytelnik kart', description: 'Dobierz łącznie 40 kart.', condition: (ctx) => ctx.profile.stats.totalCardsDrawn >= 40 },
+  { id: 'steady_energy', name: 'Stabilna energia', description: 'Wygraj z energią co najmniej 70.', condition: (ctx) => ctx.playerWon && ctx.player.energy >= 70 },
+  { id: 'burnout_tamer', name: 'Pogromca wypalenia', description: 'Wygraj z wypaleniem poniżej 25.', condition: (ctx) => ctx.playerWon && ctx.player.burnout < 25 },
+  { id: 'rent_machine', name: 'Maszyna czynszowa', description: 'Otrzymaj łącznie 1500 zł czynszu.', condition: (ctx) => ctx.profile.stats.totalRentReceived >= 1500 },
+  { id: 'turn_veteran', name: 'Weteran tur', description: 'Zakończ łącznie 120 tur.', condition: (ctx) => ctx.profile.stats.turnsEnded >= 120 },
+  { id: 'season_pioneer', name: 'Pionier sezonu', description: 'Odblokuj 5 osiągnięć w jednym sezonie.', condition: (ctx) => getSeasonUnlockedCount(ctx.season) >= 5 },
+];
 let selectedLocalMatchMode = DEFAULT_BALANCE_PRESET;
 let selectedOnlineMatchMode = DEFAULT_BALANCE_PRESET;
 
@@ -252,9 +277,10 @@ function shuffleArray(arr) {
 }
 function rollDie() { return Math.floor(Math.random() * 6) + 1; }
 
-function showToast(msg, duration = 2800) {
+function showToast(msg, duration = 2800, extraClass = '') {
   const el = document.createElement('div');
   el.className = 'toast';
+  if (extraClass) el.classList.add(extraClass);
   el.textContent = msg;
   document.getElementById('toast-container').appendChild(el);
   setTimeout(() => el.remove(), duration);
@@ -275,6 +301,135 @@ function askPlayerChoice(message) {
 
 function formatMoney(n) { return n + ' zł'; }
 function clampStat(value, min = 0, max = 100) { return Math.max(min, Math.min(max, value)); }
+
+function createDefaultMetaProgress() {
+  return {
+    version: 1,
+    unlocked: {},
+    stats: {
+      gamesPlayed: 0,
+      gamesWon: 0,
+      winStreak: 0,
+      bestWinStreak: 0,
+      turnsEnded: 0,
+      totalPropertiesBought: 0,
+      totalCardsDrawn: 0,
+      totalRentPaid: 0,
+      totalRentReceived: 0,
+      totalPassGo: 0,
+      totalJailVisits: 0,
+      totalDoubleRolls: 0,
+      totalSupervisionGained: 0,
+      totalBuildActions: 0,
+      totalMortgageActions: 0,
+      bankruptcies: 0,
+    },
+  };
+}
+
+function loadMetaProgress() {
+  try {
+    const raw = localStorage.getItem(META_PROGRESS_KEY);
+    const defaults = createDefaultMetaProgress();
+    if (!raw) return defaults;
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return defaults;
+
+    return {
+      ...defaults,
+      ...parsed,
+      unlocked: {
+        ...defaults.unlocked,
+        ...(parsed.unlocked && typeof parsed.unlocked === 'object' ? parsed.unlocked : {}),
+      },
+      stats: {
+        ...defaults.stats,
+        ...(parsed.stats && typeof parsed.stats === 'object' ? parsed.stats : {}),
+      },
+    };
+  } catch (_e) {
+    return createDefaultMetaProgress();
+  }
+}
+
+function saveMetaProgress() {
+  try { localStorage.setItem(META_PROGRESS_KEY, JSON.stringify(metaProgress)); } catch (_e) {}
+}
+
+function getCurrentSeasonId() {
+  const now = new Date();
+  const quarter = Math.floor(now.getUTCMonth() / 3) + 1;
+  return `${now.getUTCFullYear()}-Q${quarter}`;
+}
+
+function createDefaultSeasonJournal() {
+  const id = getCurrentSeasonId();
+  return {
+    activeSeasonId: id,
+    seasons: [{
+      id,
+      label: `Sezon ${id}`,
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      gamesPlayed: 0,
+      wins: 0,
+      unlockedAchievementIds: [],
+      journalEntries: [],
+    }],
+  };
+}
+
+function loadSeasonJournal() {
+  try {
+    const raw = localStorage.getItem(SEASON_JOURNAL_KEY);
+    if (!raw) return createDefaultSeasonJournal();
+    return JSON.parse(raw);
+  } catch (_e) {
+    return createDefaultSeasonJournal();
+  }
+}
+
+function saveSeasonJournal() {
+  try { localStorage.setItem(SEASON_JOURNAL_KEY, JSON.stringify(seasonJournal)); } catch (_e) {}
+}
+
+function ensureActiveSeason() {
+  const currentId = getCurrentSeasonId();
+  if (!seasonJournal || !Array.isArray(seasonJournal.seasons)) seasonJournal = createDefaultSeasonJournal();
+  let season = seasonJournal.seasons.find((s) => s.id === currentId);
+  if (!season) {
+    season = {
+      id: currentId,
+      label: `Sezon ${currentId}`,
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      gamesPlayed: 0,
+      wins: 0,
+      unlockedAchievementIds: [],
+      journalEntries: [],
+    };
+    seasonJournal.seasons.unshift(season);
+  }
+  seasonJournal.activeSeasonId = currentId;
+  return season;
+}
+
+function createRunStats() {
+  return {
+    bankruptPlayers: new Set(),
+    doubledRolls: 0,
+  };
+}
+
+function getSeasonUnlockedCount(season) {
+  if (!season || !Array.isArray(season.unlockedAchievementIds)) return 0;
+  return new Set(season.unlockedAchievementIds).size;
+}
+
+function showAchievementToast(name) {
+  showToast(`🏅 Osiągnięcie: ${name}`, 2600, 'toast-subtle');
+}
 
 function classifyLogType(msg = '', isTurn = false) {
   if (isTurn) return 'turn';
@@ -382,6 +537,7 @@ function applyPlayerDelta(gs, player, delta = {}, reason = '') {
     summary.push(`${change > 0 ? '+' : ''}${change} ${label}`);
   });
   if (delta.supervision) player.supervisionShield += delta.supervision;
+  if (delta.supervision && metaProgress) metaProgress.stats.totalSupervisionGained += Math.max(0, delta.supervision);
   if (summary.length) addLog(gs, `${player.name}: ${summary.join(', ')}${reason ? ` (${reason})` : ''}.`);
 }
 
@@ -755,6 +911,9 @@ function renderOnboardingStep() {
 // INIT
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
+  metaProgress = loadMetaProgress();
+  seasonJournal = loadSeasonJournal();
+  ensureActiveSeason();
   initAudioSystem();
   loadSettings();
   applySettings();
@@ -931,6 +1090,13 @@ function setupMenuHandlers() {
     initSocket();
     showScreen('screen-online-lobby');
   });
+  document.getElementById('btn-achievements').addEventListener('click', () => {
+    renderAchievementsScreen();
+    showScreen('screen-achievements');
+  });
+  document.getElementById('btn-achievements-back').addEventListener('click', () => {
+    showScreen('screen-menu');
+  });
   document.getElementById('btn-settings').addEventListener('click', openSettingsModal);
   document.getElementById('btn-rematch-same-settings').addEventListener('click', () => {
     if (!Array.isArray(lastLocalPlayerConfigs) || !lastLocalPlayerConfigs.length) {
@@ -948,6 +1114,42 @@ function setupMenuHandlers() {
     boardRendered = false;
     showScreen('screen-menu');
   });
+}
+
+function renderAchievementsScreen() {
+  const container = document.getElementById('achievements-list');
+  const summary = document.getElementById('achievements-summary');
+  const seasonPreview = document.getElementById('season-journal-preview');
+  if (!container || !summary || !seasonPreview) return;
+
+  ensureActiveSeason();
+  const unlockedCount = Object.keys(metaProgress.unlocked || {}).length;
+  summary.textContent = `Odblokowane: ${unlockedCount}/${ACHIEVEMENTS.length} · Partie: ${metaProgress.stats.gamesPlayed} · Wygrane: ${metaProgress.stats.gamesWon}`;
+
+  container.innerHTML = ACHIEVEMENTS.map((ach) => {
+    const unlockedAt = metaProgress.unlocked[ach.id];
+    const unlocked = Boolean(unlockedAt);
+    const badge = unlocked ? '✅ Odblokowane' : '🔒 Zablokowane';
+    const date = unlocked ? new Date(unlockedAt).toLocaleDateString('pl-PL') : '—';
+    return `
+      <div class="achievement-item ${unlocked ? 'unlocked' : 'locked'}">
+        <div class="achievement-row">
+          <div class="achievement-name">${escHtml(ach.name)}</div>
+          <div>${badge}</div>
+        </div>
+        <div class="achievement-desc">${escHtml(ach.description)}</div>
+        <div class="achievement-desc">Data: ${date}</div>
+      </div>
+    `;
+  }).join('');
+
+  const season = ensureActiveSeason();
+  seasonPreview.innerHTML = `
+    <strong>📓 Dzienniki sezonowe (fundament)</strong><br>
+    Aktywny sezon: ${escHtml(season.label)} · Partie: ${season.gamesPlayed} · Wygrane: ${season.wins}<br>
+    Odblokowane w sezonie: ${getSeasonUnlockedCount(season)}<br>
+    Wkrótce: szczegółowe wpisy i cele czasowe.
+  `;
 }
 
 // ============================================================
@@ -1552,6 +1754,8 @@ function startLocalGame(playerConfigs, modeKey = DEFAULT_BALANCE_PRESET) {
   localGame  = createGameState(playerConfigs, profile);
   lastLocalPlayerConfigs = playerConfigs.map((p) => ({ ...p }));
   captureRoundSnapshot(localGame, 'start');
+  currentRunStats = createRunStats();
+  endgameMetaRecorded = false;
   aiStepPending = false;
   if (aiStepTimer) clearTimeout(aiStepTimer);
   aiStepTimer = null;
@@ -1579,6 +1783,8 @@ function startOnlineGame(gs) {
   const profile = getMatchModeProfile(gs && gs.matchProfileKey ? gs.matchProfileKey : selectedOnlineMatchMode);
   applyBalanceProfile(profile);
   if (!boardRendered) { renderBoard(); boardRendered = true; }
+  currentRunStats = createRunStats();
+  endgameMetaRecorded = false;
   // Enable chat for online mode
   const offlineNote = document.getElementById('chat-drawer-offline-note');
   const drawerInput = document.getElementById('chat-drawer-input');
@@ -2134,6 +2340,68 @@ function animateDiceOnBoard(d1, d2) {
   fx.classList.add('playing');
 }
 
+function getProfilePlayerForMeta(gs) {
+  if (!gs || !gs.players || !gs.players.length) return null;
+  if (gameMode === 'online') return gs.players.find((p) => p.id === myPlayerId) || gs.players[0];
+  return gs.players[0];
+}
+
+function processMetaProgressForFinishedGame(gs) {
+  if (!gs || endgameMetaRecorded) return;
+  endgameMetaRecorded = true;
+  if (!metaProgress) metaProgress = createDefaultMetaProgress();
+  if (!seasonJournal) seasonJournal = createDefaultSeasonJournal();
+  const season = ensureActiveSeason();
+  const player = getProfilePlayerForMeta(gs);
+  if (!player) return;
+
+  metaProgress.stats.gamesPlayed++;
+  season.gamesPlayed++;
+  const playerWon = gs.winner === player.id;
+  if (playerWon) {
+    metaProgress.stats.gamesWon++;
+    metaProgress.stats.winStreak++;
+    metaProgress.stats.bestWinStreak = Math.max(metaProgress.stats.bestWinStreak, metaProgress.stats.winStreak);
+    season.wins++;
+  } else {
+    metaProgress.stats.winStreak = 0;
+  }
+
+  season.updatedAt = new Date().toISOString();
+  season.journalEntries.unshift({
+    at: season.updatedAt,
+    type: 'game-finished',
+    winnerId: gs.winner,
+    playerId: player.id,
+    playerWon,
+    bankruptPlayers: currentRunStats ? currentRunStats.bankruptPlayers.size : 0,
+  });
+  season.journalEntries = season.journalEntries.slice(0, 50);
+
+  const ctx = {
+    profile: metaProgress,
+    run: {
+      bankruptPlayers: currentRunStats ? currentRunStats.bankruptPlayers.size : 0,
+      doubledRolls: currentRunStats ? currentRunStats.doubledRolls : 0,
+    },
+    player,
+    playerWon,
+    season,
+  };
+  ACHIEVEMENTS.forEach((ach) => {
+    if (metaProgress.unlocked[ach.id]) return;
+    if (!ach.condition(ctx)) return;
+    const unlockedAt = new Date().toISOString();
+    metaProgress.unlocked[ach.id] = unlockedAt;
+    season.unlockedAchievementIds.push(ach.id);
+    season.journalEntries.unshift({ at: unlockedAt, type: 'achievement', achievementId: ach.id });
+    showAchievementToast(ach.name);
+  });
+
+  saveMetaProgress();
+  saveSeasonJournal();
+}
+
 // ============================================================
 // UI UPDATE
 // ============================================================
@@ -2159,6 +2427,7 @@ function updateUI(gs) {
   movedPlayersLastUpdate = gs.players.map(p => p.position);
 
   if (gs.phase === 'end' && gs.winner !== null) {
+    processMetaProgressForFinishedGame(gs);
     setTimeout(() => showGameOver(gs), 600);
   }
 
@@ -2734,6 +3003,8 @@ function doRoll(gs) {
   }
 
   if (isDoubles) {
+    if (metaProgress) metaProgress.stats.totalDoubleRolls++;
+    if (currentRunStats) currentRunStats.doubledRolls++;
     gs.doubles++;
     if (gs.doubles >= 3) {
       addLog(gs, `${player.name} rzucił trzy dublety! Idzie do Izolacji.`);
@@ -2780,6 +3051,7 @@ function doMove(gs, player, steps) {
   startMoveAnimation(gs, player, oldPos, steps, () => {
     const newPos = (oldPos + steps) % 40;
     if (oldPos + steps >= 40) {
+      if (metaProgress) metaProgress.stats.totalPassGo++;
       applyPlayerDelta(gs, player, { money: activeBalanceProfile.goMoney, prestige: 2, energy: 1 }, 'START');
       addLog(gs, `${player.name} przeszedł przez START — bonus miesięczny (+${activeBalanceProfile.goMoney} zł, +2 prestiżu, +1 energii).`);
       showToast(`${player.name} przeszedł przez START! +${activeBalanceProfile.goMoney} zł / +2⭐ / +1🔋`);
@@ -2888,6 +3160,10 @@ function handlePropertyLanding(gs, player, space) {
       const rent = calculateRent(gs, space, propState);
       applyPlayerDelta(gs, player, { money: -rent, energy: -4, burnout: 3 }, 'czynsz i obciążenie');
       applyPlayerDelta(gs, owner, { money: rent, prestige: 1, energy: -1 }, 'obsługa kolejnego klienta');
+      if (metaProgress) {
+        metaProgress.stats.totalRentPaid += rent;
+        metaProgress.stats.totalRentReceived += rent;
+      }
       addLog(gs, `${player.name} zapłacił ${rent} zł czynszu graczowi ${owner.name}.`);
       showToast(`Czynsz: -${rent} zł → ${owner.name}`);
       playSfx('rent');
@@ -2927,6 +3203,7 @@ function sendToJail(gs, player) {
   player.jailTurns = 0;
   applyPlayerDelta(gs, player, { energy: -10, burnout: 10, prestige: -4 }, 'kryzys zawodowy');
   addLog(gs, `${player.name} trafia do Izolacji!`);
+  if (metaProgress) metaProgress.stats.totalJailVisits++;
   showToast(`${player.name} trafia do Izolacji! 🔒`);
   playSfx('jail');
 }
@@ -2935,6 +3212,7 @@ function sendToJail(gs, player) {
 // CARD DRAWING
 // ============================================================
 function doDrawCard(gs, player, deck) {
+  if (metaProgress) metaProgress.stats.totalCardsDrawn++;
   let card;
   animateCardDraw(deck);
   if (deck === 'insight') {
@@ -3142,6 +3420,7 @@ function doBuy(gs) {
   if (!player.properties.includes(spaceId)) player.properties.push(spaceId);
 
   addLog(gs, `${player.name} kupił ${space.name} za ${space.price} zł.`);
+  if (metaProgress) metaProgress.stats.totalPropertiesBought++;
   if (space.price >= 220) {
     recordTurningPoint(gs, {
       type: 'investment',
@@ -3218,6 +3497,7 @@ function doEndTurn(gs) {
   gs.turn++;
   gs.phase              = 'rolling';
   gs.rolledThisTurn     = false;
+  if (metaProgress) metaProgress.stats.turnsEnded++;
 
   const active = gs.players.filter(p => !p.bankrupt);
   if (active.length <= 1) {
@@ -3434,6 +3714,8 @@ function checkPlayerVitalStatus(gs, player) {
   if (!player || player.bankrupt) return;
   if (player.energy > 0 && player.ethics > 0 && player.burnout < CRITICAL_BURNOUT) return;
   player.bankrupt = true;
+  if (metaProgress) metaProgress.stats.bankruptcies++;
+  if (currentRunStats) currentRunStats.bankruptPlayers.add(player.id);
   if (player.energy <= 0) addLog(gs, `💥 ${player.name} odpada: energia spadła do zera.`);
   else if (player.ethics <= 0) addLog(gs, `⚠️ ${player.name} odpada: etyka spadła do zera.`);
   else addLog(gs, `🔥 ${player.name} odpada: krytyczne wypalenie.`);
@@ -3483,7 +3765,11 @@ function checkBankruptcy(gs, player, creditorId) {
   if (player.money >= 0) return;
 
   // Bankrupt
-  player.bankrupt = true;
+  if (!player.bankrupt) {
+    player.bankrupt = true;
+    if (metaProgress) metaProgress.stats.bankruptcies++;
+    if (currentRunStats) currentRunStats.bankruptPlayers.add(player.id);
+  }
   addLog(gs, `💀 ${player.name} zbankrutował!`);
   recordTurningPoint(gs, {
     type: 'bankruptcy',
@@ -3640,6 +3926,7 @@ function doBuildHouse(gs, player, spaceId) {
     showToast(`Dodano certyfikat na ${sp.name}!`);
     playSfx('build');
   }
+  if (metaProgress) metaProgress.stats.totalBuildActions++;
 }
 
 function doSellHouse(gs, player, spaceId) {
@@ -3722,6 +4009,7 @@ function doMortgage(gs, player, spaceId) {
   player.money += sp.mortgage;
   ps.mortgaged = true;
   addLog(gs, `${player.name} zastawił ${sp.name} za ${sp.mortgage} zł.`);
+  if (metaProgress) metaProgress.stats.totalMortgageActions++;
   showToast(`Zastawiono ${sp.name} +${sp.mortgage} zł`);
   playSfx('mortgage');
 }
@@ -3735,6 +4023,7 @@ function doUnmortgage(gs, player, spaceId) {
   player.money -= cost;
   ps.mortgaged = false;
   addLog(gs, `${player.name} odkupił ${sp.name} za ${cost} zł.`);
+  if (metaProgress) metaProgress.stats.totalMortgageActions++;
   showToast(`Odkupiono ${sp.name} -${cost} zł`);
   playSfx('mortgage');
 }
