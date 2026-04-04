@@ -29,6 +29,8 @@ const AI_CASH_BUFFER = 300;
 const AI_DECISION_DELAY_MS = 850;
 const AI_PERSONALITY_TYPES = ['conservative', 'balanced', 'aggressive'];
 const ONBOARDING_SEEN_KEY = 'psychopoly-onboarding-seen';
+const META_PROGRESS_KEY = 'psychopoly-meta-progress-v1';
+const SEASON_JOURNAL_KEY = 'psychopoly-season-journal-v1';
 
 const DICE_FACES = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
 
@@ -139,8 +141,52 @@ let onboardingActive = false;
 let onboardingShownThisSession = false;
 let onboardingHighlightedEl = null;
 let actionSuggestion = null;
+let metaProgress = null;
+let seasonJournal = null;
+let currentRunStats = null;
+let endgameMetaRecorded = false;
+
+const ACHIEVEMENTS = [
+  { id: 'first_steps', name: 'Pierwsze kroki', description: 'Ukończ 1 partię.', condition: (ctx) => ctx.profile.stats.gamesPlayed >= 1 },
+  { id: 'returning_mind', name: 'Powracający umysł', description: 'Ukończ 5 partii.', condition: (ctx) => ctx.profile.stats.gamesPlayed >= 5 },
+  { id: 'weekend_clinic', name: 'Weekendowa praktyka', description: 'Ukończ 12 partii.', condition: (ctx) => ctx.profile.stats.gamesPlayed >= 12 },
+  { id: 'first_win', name: 'Pierwsza wygrana', description: 'Wygraj partię.', condition: (ctx) => ctx.playerWon },
+  { id: 'winning_rhythm', name: 'Rytm zwycięstw', description: 'Wygraj 3 partie z rzędu.', condition: (ctx) => ctx.profile.stats.bestWinStreak >= 3 },
+  { id: 'ethics_guardian', name: 'Wysoka etyka do końca', description: 'Zakończ partię z etyką co najmniej 80.', condition: (ctx) => ctx.player.ethics >= 80 },
+  { id: 'zero_bankruptcies', name: '0 bankructw', description: 'Ukończ partię bez żadnego bankructwa gracza.', condition: (ctx) => ctx.run.bankruptPlayers === 0 },
+  { id: 'survivor', name: 'Niezłomny', description: 'Wygraj bez bankructwa swojej postaci.', condition: (ctx) => ctx.playerWon && !ctx.player.bankrupt },
+  { id: 'supervision_master', name: 'Mistrz superwizji', description: 'Zdobądź łącznie 12 punktów superwizji.', condition: (ctx) => ctx.profile.stats.totalSupervisionGained >= 12 },
+  { id: 'property_hustle', name: 'Kolekcjoner aktywów', description: 'Kup łącznie 15 aktywów.', condition: (ctx) => ctx.profile.stats.totalPropertiesBought >= 15 },
+  { id: 'card_scholar', name: 'Czytelnik kart', description: 'Dobierz łącznie 40 kart.', condition: (ctx) => ctx.profile.stats.totalCardsDrawn >= 40 },
+  { id: 'steady_energy', name: 'Stabilna energia', description: 'Wygraj z energią co najmniej 70.', condition: (ctx) => ctx.playerWon && ctx.player.energy >= 70 },
+  { id: 'burnout_tamer', name: 'Pogromca wypalenia', description: 'Wygraj z wypaleniem poniżej 25.', condition: (ctx) => ctx.playerWon && ctx.player.burnout < 25 },
+  { id: 'rent_machine', name: 'Maszyna czynszowa', description: 'Otrzymaj łącznie 1500 zł czynszu.', condition: (ctx) => ctx.profile.stats.totalRentReceived >= 1500 },
+  { id: 'turn_veteran', name: 'Weteran tur', description: 'Zakończ łącznie 120 tur.', condition: (ctx) => ctx.profile.stats.turnsEnded >= 120 },
+  { id: 'season_pioneer', name: 'Pionier sezonu', description: 'Odblokuj 5 osiągnięć w jednym sezonie.', condition: (ctx) => getSeasonUnlockedCount(ctx.season) >= 5 },
+];
 let selectedLocalMatchMode = DEFAULT_BALANCE_PRESET;
 let selectedOnlineMatchMode = DEFAULT_BALANCE_PRESET;
+let boardTransformRafId = null;
+let boardTransformDirty = false;
+let boardDelegatedHandlersBound = false;
+let lastUiSnapshot = null;
+const tokenNodeByPlayerId = new Map();
+const domCache = new Map();
+const runtimePerf = {
+  enabled: true,
+  samples: {
+    uiTotal: [],
+    tokens: [],
+    buildings: [],
+    ownership: [],
+    sidePanel: [],
+    actionButtons: [],
+  },
+  interactionSamples: [],
+  frameSamples: [],
+  lastFrameTime: 0,
+  perfModeReason: null,
+};
 
 const ONBOARDING_STEPS = [
   {
@@ -256,11 +302,68 @@ function rollDie() { return Math.floor(Math.random() * 6) + 1; }
 function deepCloneState(value) {
   if (typeof structuredClone === 'function') return structuredClone(value);
   return JSON.parse(JSON.stringify(value));
+function getEl(id) {
+  if (domCache.has(id)) {
+    const cached = domCache.get(id);
+    if (cached && cached.isConnected) return cached;
+    domCache.delete(id);
+  }
+  const el = document.getElementById(id);
+  if (el) domCache.set(id, el);
+  return el;
+}
+
+function pushPerfSample(bucket, value, max = 90) {
+  if (!runtimePerf.enabled || !runtimePerf.samples[bucket]) return;
+  const arr = runtimePerf.samples[bucket];
+  arr.push(value);
+  if (arr.length > max) arr.shift();
+}
+
+function pushArraySample(target, value, max = 90) {
+  if (!runtimePerf.enabled || !Array.isArray(target)) return;
+  target.push(value);
+  if (target.length > max) target.shift();
+}
+
+function withPerfMetric(bucket, fn) {
+  const start = performance.now();
+  const result = fn();
+  pushPerfSample(bucket, performance.now() - start);
+  return result;
+}
+
+function avg(arr) {
+  if (!arr || !arr.length) return 0;
+  return arr.reduce((sum, n) => sum + n, 0) / arr.length;
+}
+
+function p95(arr) {
+  if (!arr || !arr.length) return 0;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95));
+  return sorted[idx];
+}
+
+function reportRuntimePerf() {
+  const rows = Object.entries(runtimePerf.samples).map(([name, arr]) => ({
+    metric: name,
+    avgMs: Number(avg(arr).toFixed(2)),
+    p95Ms: Number(p95(arr).toFixed(2)),
+    samples: arr.length,
+  }));
+  const interactionAvg = Number(avg(runtimePerf.interactionSamples).toFixed(2));
+  const interactionP95 = Number(p95(runtimePerf.interactionSamples).toFixed(2));
+  console.table(rows);
+  if (runtimePerf.interactionSamples.length) {
+    console.info('[Perf] interaction latency ms', { avg: interactionAvg, p95: interactionP95, samples: runtimePerf.interactionSamples.length });
+  }
 }
 
 function showToast(msg, duration = 2800) {
   const el = document.createElement('div');
   el.className = 'toast';
+  if (extraClass) el.classList.add(extraClass);
   el.textContent = msg;
   document.getElementById('toast-container').appendChild(el);
   setTimeout(() => el.remove(), duration);
@@ -365,6 +468,135 @@ function askPlayerChoice(message) {
 
 function formatMoney(n) { return n + ' zł'; }
 function clampStat(value, min = 0, max = 100) { return Math.max(min, Math.min(max, value)); }
+
+function createDefaultMetaProgress() {
+  return {
+    version: 1,
+    unlocked: {},
+    stats: {
+      gamesPlayed: 0,
+      gamesWon: 0,
+      winStreak: 0,
+      bestWinStreak: 0,
+      turnsEnded: 0,
+      totalPropertiesBought: 0,
+      totalCardsDrawn: 0,
+      totalRentPaid: 0,
+      totalRentReceived: 0,
+      totalPassGo: 0,
+      totalJailVisits: 0,
+      totalDoubleRolls: 0,
+      totalSupervisionGained: 0,
+      totalBuildActions: 0,
+      totalMortgageActions: 0,
+      bankruptcies: 0,
+    },
+  };
+}
+
+function loadMetaProgress() {
+  try {
+    const raw = localStorage.getItem(META_PROGRESS_KEY);
+    const defaults = createDefaultMetaProgress();
+    if (!raw) return defaults;
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return defaults;
+
+    return {
+      ...defaults,
+      ...parsed,
+      unlocked: {
+        ...defaults.unlocked,
+        ...(parsed.unlocked && typeof parsed.unlocked === 'object' ? parsed.unlocked : {}),
+      },
+      stats: {
+        ...defaults.stats,
+        ...(parsed.stats && typeof parsed.stats === 'object' ? parsed.stats : {}),
+      },
+    };
+  } catch (_e) {
+    return createDefaultMetaProgress();
+  }
+}
+
+function saveMetaProgress() {
+  try { localStorage.setItem(META_PROGRESS_KEY, JSON.stringify(metaProgress)); } catch (_e) {}
+}
+
+function getCurrentSeasonId() {
+  const now = new Date();
+  const quarter = Math.floor(now.getUTCMonth() / 3) + 1;
+  return `${now.getUTCFullYear()}-Q${quarter}`;
+}
+
+function createDefaultSeasonJournal() {
+  const id = getCurrentSeasonId();
+  return {
+    activeSeasonId: id,
+    seasons: [{
+      id,
+      label: `Sezon ${id}`,
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      gamesPlayed: 0,
+      wins: 0,
+      unlockedAchievementIds: [],
+      journalEntries: [],
+    }],
+  };
+}
+
+function loadSeasonJournal() {
+  try {
+    const raw = localStorage.getItem(SEASON_JOURNAL_KEY);
+    if (!raw) return createDefaultSeasonJournal();
+    return JSON.parse(raw);
+  } catch (_e) {
+    return createDefaultSeasonJournal();
+  }
+}
+
+function saveSeasonJournal() {
+  try { localStorage.setItem(SEASON_JOURNAL_KEY, JSON.stringify(seasonJournal)); } catch (_e) {}
+}
+
+function ensureActiveSeason() {
+  const currentId = getCurrentSeasonId();
+  if (!seasonJournal || !Array.isArray(seasonJournal.seasons)) seasonJournal = createDefaultSeasonJournal();
+  let season = seasonJournal.seasons.find((s) => s.id === currentId);
+  if (!season) {
+    season = {
+      id: currentId,
+      label: `Sezon ${currentId}`,
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      gamesPlayed: 0,
+      wins: 0,
+      unlockedAchievementIds: [],
+      journalEntries: [],
+    };
+    seasonJournal.seasons.unshift(season);
+  }
+  seasonJournal.activeSeasonId = currentId;
+  return season;
+}
+
+function createRunStats() {
+  return {
+    bankruptPlayers: new Set(),
+    doubledRolls: 0,
+  };
+}
+
+function getSeasonUnlockedCount(season) {
+  if (!season || !Array.isArray(season.unlockedAchievementIds)) return 0;
+  return new Set(season.unlockedAchievementIds).size;
+}
+
+function showAchievementToast(name) {
+  showToast(`🏅 Osiągnięcie: ${name}`, 2600, 'toast-subtle');
+}
 
 function classifyLogType(msg = '', isTurn = false) {
   if (isTurn) return 'turn';
@@ -472,6 +704,7 @@ function applyPlayerDelta(gs, player, delta = {}, reason = '') {
     summary.push(`${change > 0 ? '+' : ''}${change} ${label}`);
   });
   if (delta.supervision) player.supervisionShield += delta.supervision;
+  if (delta.supervision && metaProgress) metaProgress.stats.totalSupervisionGained += Math.max(0, delta.supervision);
   if (summary.length) addLog(gs, `${player.name}: ${summary.join(', ')}${reason ? ` (${reason})` : ''}.`);
 }
 
@@ -529,6 +762,58 @@ function applySettings() {
   document.documentElement.classList.remove('theme-preload-classic', 'theme-preload-dark', 'theme-preload-calm');
   document.body.classList.remove('quality-low', 'quality-medium', 'quality-high');
   document.body.classList.add(`quality-${gameSettings.renderQuality || 'high'}`);
+  document.body.classList.toggle('performance-mode', !!gameSettings.performanceModeActive);
+}
+
+function detectPerformanceModeCandidate() {
+  const hc = navigator.hardwareConcurrency || 4;
+  const mem = navigator.deviceMemory || 4;
+  const saveData = !!navigator.connection?.saveData;
+  const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const shouldEnable = hc <= 4 || mem <= 4 || saveData || prefersReducedMotion;
+  let reason = null;
+  if (saveData) reason = 'save-data';
+  else if (prefersReducedMotion) reason = 'reduced-motion';
+  else if (mem <= 4) reason = 'low-memory';
+  else if (hc <= 4) reason = 'low-cpu';
+  return { shouldEnable, reason };
+}
+
+function applyAutomaticPerformanceMode() {
+  const { shouldEnable, reason } = detectPerformanceModeCandidate();
+  gameSettings.performanceModeActive = shouldEnable;
+  runtimePerf.perfModeReason = shouldEnable ? reason : null;
+  if (!shouldEnable) return;
+  if (gameSettings.renderQuality === 'high') gameSettings.renderQuality = 'medium';
+  gameSettings.boardFxIntensity = Math.min(gameSettings.boardFxIntensity || 1, 0.85);
+  gameSettings.animationSpeed = Math.min(gameSettings.animationSpeed || 1, 0.9);
+}
+
+function setupRuntimePerformanceMonitoring() {
+  if (!runtimePerf.enabled) return;
+  let interactionStart = 0;
+  const startInteraction = () => { interactionStart = performance.now(); };
+  const endInteraction = () => {
+    if (!interactionStart) return;
+    requestAnimationFrame(() => {
+      pushArraySample(runtimePerf.interactionSamples, performance.now() - interactionStart);
+      interactionStart = 0;
+    });
+  };
+  window.addEventListener('pointerdown', startInteraction, { passive: true });
+  window.addEventListener('keydown', startInteraction, { passive: true });
+  window.addEventListener('pointerup', endInteraction, { passive: true });
+  window.addEventListener('keyup', endInteraction, { passive: true });
+
+  const frameLoop = (ts) => {
+    if (runtimePerf.lastFrameTime) {
+      const delta = ts - runtimePerf.lastFrameTime;
+      pushArraySample(runtimePerf.frameSamples, delta, 120);
+    }
+    runtimePerf.lastFrameTime = ts;
+    requestAnimationFrame(frameLoop);
+  };
+  requestAnimationFrame(frameLoop);
 }
 
 function isActionGuidanceEnabled() {
@@ -663,9 +948,20 @@ function openSettingsModal() {
 }
 
 function applyBoardTransform() {
-  const board = document.getElementById('board');
+  const board = getEl('board');
   if (!board) return;
   board.style.transform = `translate(${boardPanX}px, ${boardPanY}px) scale(${boardScale}) rotate(${boardRotation}deg)`;
+}
+
+function scheduleBoardTransform() {
+  boardTransformDirty = true;
+  if (boardTransformRafId) return;
+  boardTransformRafId = requestAnimationFrame(() => {
+    boardTransformRafId = null;
+    if (!boardTransformDirty) return;
+    boardTransformDirty = false;
+    applyBoardTransform();
+  });
 }
 
 function clampBoardScale(value) {
@@ -675,7 +971,7 @@ function clampBoardScale(value) {
 function setBoardScale(nextScale) {
   boardScale = clampBoardScale(nextScale);
   document.documentElement.style.setProperty('--board-scale', String(boardScale));
-  applyBoardTransform();
+  scheduleBoardTransform();
 }
 
 function setupBoardViewportControls() {
@@ -688,15 +984,15 @@ function setupBoardViewportControls() {
 
   if (zoomIn) zoomIn.addEventListener('click', () => setBoardScale(boardScale + 0.15));
   if (zoomOut) zoomOut.addEventListener('click', () => setBoardScale(boardScale - 0.15));
-  if (rotLeft) rotLeft.addEventListener('click', () => { boardRotation -= 15; applyBoardTransform(); });
-  if (rotRight) rotRight.addEventListener('click', () => { boardRotation += 15; applyBoardTransform(); });
+  if (rotLeft) rotLeft.addEventListener('click', () => { boardRotation -= 15; scheduleBoardTransform(); });
+  if (rotRight) rotRight.addEventListener('click', () => { boardRotation += 15; scheduleBoardTransform(); });
   if (reset) reset.addEventListener('click', () => {
     boardScale = 1;
     document.documentElement.style.setProperty('--board-scale', '1');
     boardRotation = 0;
     boardPanX = 0;
     boardPanY = 0;
-    applyBoardTransform();
+    scheduleBoardTransform();
   });
 
   if (!boardArea) return;
@@ -715,7 +1011,7 @@ function setupBoardViewportControls() {
     if (!isDraggingBoard) return;
     boardPanX = e.clientX - dragStartX;
     boardPanY = e.clientY - dragStartY;
-    applyBoardTransform();
+    scheduleBoardTransform();
   });
 }
 
@@ -845,9 +1141,14 @@ function renderOnboardingStep() {
 // INIT
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
+  metaProgress = loadMetaProgress();
+  seasonJournal = loadSeasonJournal();
+  ensureActiveSeason();
   initAudioSystem();
   loadSettings();
+  applyAutomaticPerformanceMode();
   applySettings();
+  setupRuntimePerformanceMonitoring();
   setupMenuHandlers();
   setupLocalSetupHandlers();
   setupOnlineLobbyHandlers();
@@ -856,6 +1157,10 @@ document.addEventListener('DOMContentLoaded', () => {
   bindGlobalButtonSfx();
   setupBoardViewportControls();
   showScreen('screen-menu');
+  window.PsychopolyPerf = {
+    report: reportRuntimePerf,
+    state: runtimePerf,
+  };
 });
 
 function initAudioSystem() {
@@ -1021,6 +1326,13 @@ function setupMenuHandlers() {
     initSocket();
     showScreen('screen-online-lobby');
   });
+  document.getElementById('btn-achievements').addEventListener('click', () => {
+    renderAchievementsScreen();
+    showScreen('screen-achievements');
+  });
+  document.getElementById('btn-achievements-back').addEventListener('click', () => {
+    showScreen('screen-menu');
+  });
   document.getElementById('btn-settings').addEventListener('click', openSettingsModal);
   document.getElementById('btn-rematch-same-settings').addEventListener('click', () => {
     if (!Array.isArray(lastLocalPlayerConfigs) || !lastLocalPlayerConfigs.length) {
@@ -1038,6 +1350,42 @@ function setupMenuHandlers() {
     boardRendered = false;
     showScreen('screen-menu');
   });
+}
+
+function renderAchievementsScreen() {
+  const container = document.getElementById('achievements-list');
+  const summary = document.getElementById('achievements-summary');
+  const seasonPreview = document.getElementById('season-journal-preview');
+  if (!container || !summary || !seasonPreview) return;
+
+  ensureActiveSeason();
+  const unlockedCount = Object.keys(metaProgress.unlocked || {}).length;
+  summary.textContent = `Odblokowane: ${unlockedCount}/${ACHIEVEMENTS.length} · Partie: ${metaProgress.stats.gamesPlayed} · Wygrane: ${metaProgress.stats.gamesWon}`;
+
+  container.innerHTML = ACHIEVEMENTS.map((ach) => {
+    const unlockedAt = metaProgress.unlocked[ach.id];
+    const unlocked = Boolean(unlockedAt);
+    const badge = unlocked ? '✅ Odblokowane' : '🔒 Zablokowane';
+    const date = unlocked ? new Date(unlockedAt).toLocaleDateString('pl-PL') : '—';
+    return `
+      <div class="achievement-item ${unlocked ? 'unlocked' : 'locked'}">
+        <div class="achievement-row">
+          <div class="achievement-name">${escHtml(ach.name)}</div>
+          <div>${badge}</div>
+        </div>
+        <div class="achievement-desc">${escHtml(ach.description)}</div>
+        <div class="achievement-desc">Data: ${date}</div>
+      </div>
+    `;
+  }).join('');
+
+  const season = ensureActiveSeason();
+  seasonPreview.innerHTML = `
+    <strong>📓 Dzienniki sezonowe (fundament)</strong><br>
+    Aktywny sezon: ${escHtml(season.label)} · Partie: ${season.gamesPlayed} · Wygrane: ${season.wins}<br>
+    Odblokowane w sezonie: ${getSeasonUnlockedCount(season)}<br>
+    Wkrótce: szczegółowe wpisy i cele czasowe.
+  `;
 }
 
 // ============================================================
@@ -1650,6 +1998,8 @@ function startLocalGame(playerConfigs, modeKey = DEFAULT_BALANCE_PRESET) {
   resetUndoForTurn(localGame, 'Cofnięcie dostępne po bezpiecznej akcji.');
   lastLocalPlayerConfigs = playerConfigs.map((p) => ({ ...p }));
   captureRoundSnapshot(localGame, 'start');
+  currentRunStats = createRunStats();
+  endgameMetaRecorded = false;
   aiStepPending = false;
   if (aiStepTimer) clearTimeout(aiStepTimer);
   aiStepTimer = null;
@@ -1677,6 +2027,8 @@ function startOnlineGame(gs) {
   const profile = getMatchModeProfile(gs && gs.matchProfileKey ? gs.matchProfileKey : selectedOnlineMatchMode);
   applyBalanceProfile(profile);
   if (!boardRendered) { renderBoard(); boardRendered = true; }
+  currentRunStats = createRunStats();
+  endgameMetaRecorded = false;
   // Enable chat for online mode
   const offlineNote = document.getElementById('chat-drawer-offline-note');
   const drawerInput = document.getElementById('chat-drawer-input');
@@ -1992,8 +2344,10 @@ function sendOnlineAction(type, data = {}) {
 // BOARD RENDERING
 // ============================================================
 function renderBoard() {
-  const board = document.getElementById('board');
+  const board = getEl('board');
+  if (!board) return;
   board.innerHTML = '';
+  const fragment = document.createDocumentFragment();
 
   ACTIVE_BOARD_SPACES.forEach(space => {
     const pos = GRID_POSITIONS[space.id];
@@ -2029,17 +2383,7 @@ function renderBoard() {
     tokenLayer.id = `tokens-${space.id}`;
     cell.appendChild(tokenLayer);
 
-    cell.addEventListener('mouseenter', (e) => {
-      showSpaceTooltip(space, cell);
-      showSpacePreview(space, 'hover');
-    });
-    cell.addEventListener('mouseleave', () => hideSpaceTooltip());
-    cell.addEventListener('click', () => {
-      showSpacePreview(space, 'click');
-      if (isCompactPreviewViewport()) openSpacePreviewModal(space);
-    });
-
-    board.appendChild(cell);
+    fragment.appendChild(cell);
   });
 
   // Center piece
@@ -2070,10 +2414,37 @@ function renderBoard() {
     <div class="center-phase" id="center-phase"></div>
     <div class="turn-player-stats" id="turn-player-stats"></div>
   `;
-  board.appendChild(center);
+  fragment.appendChild(center);
+  board.appendChild(fragment);
+
+  if (!boardDelegatedHandlersBound) {
+    boardDelegatedHandlersBound = true;
+    board.addEventListener('mouseover', (event) => {
+      const cell = event.target.closest('.board-space');
+      if (!cell || !board.contains(cell)) return;
+      const spaceId = Number(cell.dataset.spaceId);
+      const space = ACTIVE_BOARD_SPACES[spaceId];
+      if (!space) return;
+      showSpaceTooltip(space, cell);
+      showSpacePreview(space, 'hover');
+    });
+    board.addEventListener('mouseout', (event) => {
+      const leavingBoard = !event.relatedTarget || !event.relatedTarget.closest('#board');
+      if (leavingBoard) hideSpaceTooltip();
+    });
+    board.addEventListener('click', (event) => {
+      const cell = event.target.closest('.board-space');
+      if (!cell || !board.contains(cell)) return;
+      const spaceId = Number(cell.dataset.spaceId);
+      const space = ACTIVE_BOARD_SPACES[spaceId];
+      if (!space) return;
+      showSpacePreview(space, 'click');
+      if (isCompactPreviewViewport()) openSpacePreviewModal(space);
+    });
+  }
 
   // Card deck click handlers
-  document.getElementById('insight-deck').addEventListener('click', () => {
+  getEl('insight-deck').addEventListener('click', () => {
     if (!localGame) return;
     const gs = localGame;
     if (gs.phase !== 'card-select') return;
@@ -2091,7 +2462,7 @@ function renderBoard() {
       sendOnlineAction('draw-card', { deck: 'insight' });
     }
   });
-  document.getElementById('session-deck').addEventListener('click', () => {
+  getEl('session-deck').addEventListener('click', () => {
     if (!localGame) return;
     const gs = localGame;
     if (gs.phase !== 'card-select') return;
@@ -2109,7 +2480,7 @@ function renderBoard() {
       sendOnlineAction('draw-card', { deck: 'session' });
     }
   });
-  applyBoardTransform();
+  scheduleBoardTransform();
 }
 
 function cornerContent(space) {
@@ -2217,16 +2588,15 @@ function hideSpaceTooltip() {
 }
 
 function animateBoardFocus(fromSpaceId, toSpaceId) {
-  const fromEl = document.getElementById(`space-${fromSpaceId}`);
-  const toEl = document.getElementById(`space-${toSpaceId}`);
-  const boardArea = document.getElementById('board-area');
+  const fromEl = getEl(`space-${fromSpaceId}`);
+  const toEl = getEl(`space-${toSpaceId}`);
+  const boardArea = getEl('board-area');
   if (!fromEl || !toEl || !boardArea) return;
 
   [fromEl, toEl].forEach((el, idx) => {
     setTimeout(() => {
       el.classList.remove('space-focus-pulse');
-      void el.offsetWidth;
-      el.classList.add('space-focus-pulse');
+      requestAnimationFrame(() => el.classList.add('space-focus-pulse'));
     }, idx * 450);
   });
 
@@ -2240,24 +2610,84 @@ function animateBoardFocus(fromSpaceId, toSpaceId) {
 }
 
 function animateCardDraw(deck) {
-  const fx = document.getElementById('card-draw-fx');
+  const fx = getEl('card-draw-fx');
   if (!fx) return;
   fx.textContent = deck === 'insight' ? '🟧 Karta Szansy' : '🟦 Karta Społeczności';
   fx.classList.remove('playing');
-  void fx.offsetWidth;
-  fx.classList.add('playing');
+  requestAnimationFrame(() => fx.classList.add('playing'));
 }
 
 function animateDiceOnBoard(d1, d2) {
-  const fx = document.getElementById('dice-board-fx');
-  const die1 = document.getElementById('board-die1');
-  const die2 = document.getElementById('board-die2');
+  const fx = getEl('dice-board-fx');
+  const die1 = getEl('board-die1');
+  const die2 = getEl('board-die2');
   if (!fx || !die1 || !die2) return;
   die1.textContent = DICE_FACES[d1] || '⚀';
   die2.textContent = DICE_FACES[d2] || '⚀';
   fx.classList.remove('playing');
-  void fx.offsetWidth;
-  fx.classList.add('playing');
+  requestAnimationFrame(() => fx.classList.add('playing'));
+}
+
+function getProfilePlayerForMeta(gs) {
+  if (!gs || !gs.players || !gs.players.length) return null;
+  if (gameMode === 'online') return gs.players.find((p) => p.id === myPlayerId) || gs.players[0];
+  return gs.players[0];
+}
+
+function processMetaProgressForFinishedGame(gs) {
+  if (!gs || endgameMetaRecorded) return;
+  endgameMetaRecorded = true;
+  if (!metaProgress) metaProgress = createDefaultMetaProgress();
+  if (!seasonJournal) seasonJournal = createDefaultSeasonJournal();
+  const season = ensureActiveSeason();
+  const player = getProfilePlayerForMeta(gs);
+  if (!player) return;
+
+  metaProgress.stats.gamesPlayed++;
+  season.gamesPlayed++;
+  const playerWon = gs.winner === player.id;
+  if (playerWon) {
+    metaProgress.stats.gamesWon++;
+    metaProgress.stats.winStreak++;
+    metaProgress.stats.bestWinStreak = Math.max(metaProgress.stats.bestWinStreak, metaProgress.stats.winStreak);
+    season.wins++;
+  } else {
+    metaProgress.stats.winStreak = 0;
+  }
+
+  season.updatedAt = new Date().toISOString();
+  season.journalEntries.unshift({
+    at: season.updatedAt,
+    type: 'game-finished',
+    winnerId: gs.winner,
+    playerId: player.id,
+    playerWon,
+    bankruptPlayers: currentRunStats ? currentRunStats.bankruptPlayers.size : 0,
+  });
+  season.journalEntries = season.journalEntries.slice(0, 50);
+
+  const ctx = {
+    profile: metaProgress,
+    run: {
+      bankruptPlayers: currentRunStats ? currentRunStats.bankruptPlayers.size : 0,
+      doubledRolls: currentRunStats ? currentRunStats.doubledRolls : 0,
+    },
+    player,
+    playerWon,
+    season,
+  };
+  ACHIEVEMENTS.forEach((ach) => {
+    if (metaProgress.unlocked[ach.id]) return;
+    if (!ach.condition(ctx)) return;
+    const unlockedAt = new Date().toISOString();
+    metaProgress.unlocked[ach.id] = unlockedAt;
+    season.unlockedAchievementIds.push(ach.id);
+    season.journalEntries.unshift({ at: unlockedAt, type: 'achievement', achievementId: ach.id });
+    showAchievementToast(ach.name);
+  });
+
+  saveMetaProgress();
+  saveSeasonJournal();
 }
 
 // ============================================================
@@ -2265,6 +2695,19 @@ function animateDiceOnBoard(d1, d2) {
 // ============================================================
 function updateUI(gs) {
   if (!gs) return;
+  const updateStart = performance.now();
+  const uiSnapshot = {
+    phase: gs.phase,
+    currentPlayerIndex: gs.currentPlayerIndex,
+    dice: `${gs.dice[0]}-${gs.dice[1]}`,
+    positions: gs.players.map((p) => p.position).join(','),
+    playerStats: gs.players.map((p) => `${p.money}|${p.prestige}|${p.energy}|${p.ethics}|${p.burnout}|${p.bankrupt ? 1 : 0}|${p.inJail ? 1 : 0}|${(p.properties || []).length}`).join(';'),
+    properties: Object.entries(gs.properties)
+      .map(([spaceId, ps]) => `${spaceId}:${ps.owner}-${ps.houses || 0}-${ps.hotel ? 1 : 0}-${ps.mortgaged ? 1 : 0}`)
+      .join('|'),
+    logTop: (gs.log && gs.log[0] && gs.log[0].ts) || 0,
+    logLen: gs.log ? gs.log.length : 0,
+  };
 
   const prevPositions = movedPlayersLastUpdate.length
     ? movedPlayersLastUpdate
@@ -2275,16 +2718,27 @@ function updateUI(gs) {
     animateBoardFocus(prevPositions[movedIdx] ?? moved.position, moved.position);
   }
 
-  renderTokens(gs);
-  renderBuildingIndicators(gs);
-  renderOwnershipRings(gs);
-  updateSidePanel(gs);
-  updateTurnQueue(gs);
-  updateActionButtons(gs);
+  if (!lastUiSnapshot || lastUiSnapshot.positions !== uiSnapshot.positions || animatingPlayerData) {
+    withPerfMetric('tokens', () => renderTokens(gs));
+  }
+  if (!lastUiSnapshot || lastUiSnapshot.properties !== uiSnapshot.properties) {
+    withPerfMetric('buildings', () => renderBuildingIndicators(gs));
+    withPerfMetric('ownership', () => renderOwnershipRings(gs));
+  }
+  if (!lastUiSnapshot || lastUiSnapshot.playerStats !== uiSnapshot.playerStats || lastUiSnapshot.properties !== uiSnapshot.properties || lastUiSnapshot.logTop !== uiSnapshot.logTop || lastUiSnapshot.logLen !== uiSnapshot.logLen) {
+    withPerfMetric('sidePanel', () => updateSidePanel(gs));
+  }
+  if (!lastUiSnapshot || lastUiSnapshot.currentPlayerIndex !== uiSnapshot.currentPlayerIndex || lastUiSnapshot.playerStats !== uiSnapshot.playerStats) {
+    updateTurnQueue(gs);
+  }
+  withPerfMetric('actionButtons', () => updateActionButtons(gs));
   updateCenterInfo(gs);
   movedPlayersLastUpdate = gs.players.map(p => p.position);
+  lastUiSnapshot = uiSnapshot;
+  pushPerfSample('uiTotal', performance.now() - updateStart);
 
   if (gs.phase === 'end' && gs.winner !== null) {
+    processMetaProgressForFinishedGame(gs);
     setTimeout(() => showGameOver(gs), 600);
   }
 
@@ -2300,24 +2754,28 @@ function updateUI(gs) {
   }
 
   if (curIsAI) scheduleAiTurnIfNeeded(gs);
+  if (runtimePerf.samples.uiTotal.length && runtimePerf.samples.uiTotal.length % 30 === 0) reportRuntimePerf();
 }
 
 // ============================================================
 // TOKENS
 // ============================================================
 function renderTokens(gs) {
-  // Clear all token layers
-  document.querySelectorAll('.token-layer').forEach(tl => { tl.innerHTML = ''; });
-
-  gs.players.forEach(player => {
+  const usedPlayerIds = new Set();
+  gs.players.forEach((player) => {
     if (player.bankrupt) return;
+    usedPlayerIds.add(player.id);
     // Use animation position when this player is mid-move
     const displayPos = (animatingPlayerData && animatingPlayerData.playerId === player.id)
       ? animatingPlayerData.animPos
       : player.position;
-    const layer = document.getElementById(`tokens-${displayPos}`);
+    const layer = getEl(`tokens-${displayPos}`);
     if (!layer) return;
-    const token = document.createElement('div');
+    let token = tokenNodeByPlayerId.get(player.id);
+    if (!token) {
+      token = document.createElement('div');
+      tokenNodeByPlayerId.set(player.id, token);
+    }
     token.className = 'player-token';
     if (player.id === gs.currentPlayerIndex) token.classList.add('active');
     token.style.backgroundColor = player.color;
@@ -2326,14 +2784,23 @@ function renderTokens(gs) {
     token.title = `${player.name} — ${player.money} zł`;
     layer.appendChild(token);
   });
+
+  tokenNodeByPlayerId.forEach((token, playerId) => {
+    if (!usedPlayerIds.has(playerId)) {
+      token.remove();
+      tokenNodeByPlayerId.delete(playerId);
+    }
+  });
 }
 
 function renderBuildingIndicators(gs) {
-  // Clear existing
-  document.querySelectorAll('.building-indicator').forEach(el => { el.innerHTML = ''; });
+  ACTIVE_BOARD_SPACES.forEach((space) => {
+    const indEl = getEl(`buildings-${space.id}`);
+    if (indEl) indEl.textContent = '';
+  });
 
   Object.entries(gs.properties).forEach(([spaceId, propState]) => {
-    const indEl = document.getElementById(`buildings-${spaceId}`);
+    const indEl = getEl(`buildings-${spaceId}`);
     if (!indEl) return;
     if (propState.hotel) {
       const dot = document.createElement('div');
@@ -2375,11 +2842,11 @@ function updateCenterInfo(gs) {
   const cur = gs.players[gs.currentPlayerIndex];
   if (!cur) return;
 
-  const centerPlayer = document.getElementById('center-player');
-  const centerPhase  = document.getElementById('center-phase');
-  const centerDice   = document.getElementById('center-dice');
-  const cd1 = document.getElementById('center-die1');
-  const cd2 = document.getElementById('center-die2');
+  const centerPlayer = getEl('center-player');
+  const centerPhase  = getEl('center-phase');
+  const centerDice   = getEl('center-dice');
+  const cd1 = getEl('center-die1');
+  const cd2 = getEl('center-die2');
 
   if (centerPlayer) {
     centerPlayer.textContent = `Tura: ${cur.name}`;
@@ -2389,7 +2856,7 @@ function updateCenterInfo(gs) {
     centerPhase.textContent = PHASE_LABELS[gs.phase] || gs.phase;
   }
 
-  const turnStats = document.getElementById('turn-player-stats');
+  const turnStats = getEl('turn-player-stats');
   if (turnStats) {
     const cardCount = cur.getOutOfJailCards || 0;
     const ownedCount = (cur.properties || []).length;
@@ -2412,17 +2879,19 @@ function updateCenterInfo(gs) {
   }
 
   // Update side-panel die display too
-  document.getElementById('die1').textContent = gs.dice[0] > 0 ? DICE_FACES[gs.dice[0]] : '?';
-  document.getElementById('die2').textContent = gs.dice[1] > 0 ? DICE_FACES[gs.dice[1]] : '?';
+  const sideDie1 = getEl('die1');
+  const sideDie2 = getEl('die2');
+  if (sideDie1) sideDie1.textContent = gs.dice[0] > 0 ? DICE_FACES[gs.dice[0]] : '?';
+  if (sideDie2) sideDie2.textContent = gs.dice[1] > 0 ? DICE_FACES[gs.dice[1]] : '?';
 
   // Card deck counts and active state
-  const insightCountEl = document.getElementById('insight-deck-count');
-  const sessionCountEl = document.getElementById('session-deck-count');
+  const insightCountEl = getEl('insight-deck-count');
+  const sessionCountEl = getEl('session-deck-count');
   if (insightCountEl) insightCountEl.textContent = (gs.insightCards ? gs.insightCards.length : 0) + ' kart';
   if (sessionCountEl) sessionCountEl.textContent = (gs.sessionCards ? gs.sessionCards.length : 0) + ' kart';
 
-  const insightDeckEl = document.getElementById('insight-deck');
-  const sessionDeckEl = document.getElementById('session-deck');
+  const insightDeckEl = getEl('insight-deck');
+  const sessionDeckEl = getEl('session-deck');
   const insightActive = gs.phase === 'card-select' && gs.pendingCardDeck === 'insight';
   const sessionActive = gs.phase === 'card-select' && gs.pendingCardDeck === 'session';
   if (insightDeckEl) insightDeckEl.classList.toggle('deck-active', insightActive);
@@ -2500,9 +2969,10 @@ function updateTurnStatusPanel(gs, { cur, myTurn, curIsAI, guidance }) {
 // TURN QUEUE BAR
 // ============================================================
 function updateTurnQueue(gs) {
-  const el = document.getElementById('turn-queue');
+  const el = getEl('turn-queue');
   if (!el) return;
   el.innerHTML = '';
+  const fragment = document.createDocumentFragment();
   const n = gs.players.length;
   for (let i = 0; i < n; i++) {
     const idx = (gs.currentPlayerIndex + i) % n;
@@ -2521,15 +2991,16 @@ function updateTurnQueue(gs) {
     item.addEventListener('mouseenter', () => showPlayerStatsTooltip(player, item));
     item.addEventListener('mouseleave', () => hidePlayerStatsTooltip());
 
-    el.appendChild(item);
+    fragment.appendChild(item);
 
     if (i < n - 1) {
       const sep = document.createElement('div');
       sep.className = 'tq-sep';
       sep.textContent = '›';
-      el.appendChild(sep);
+      fragment.appendChild(sep);
     }
   }
+  el.appendChild(fragment);
 }
 
 function showPlayerStatsTooltip(player, anchorEl) {
@@ -2564,9 +3035,10 @@ function hidePlayerStatsTooltip() {
 }
 
 function renderPlayersPanel(gs) {
-  const list = document.getElementById('players-list-panel');
+  const list = getEl('players-list-panel');
   if (!list) return;
   list.innerHTML = '';
+  const fragment = document.createDocumentFragment();
   gs.players.forEach((player, i) => {
     const card = document.createElement('div');
     card.className = `player-card-panel${i === gs.currentPlayerIndex ? ' active-turn' : ''}${player.bankrupt ? ' bankrupt' : ''}`;
@@ -2588,14 +3060,16 @@ function renderPlayersPanel(gs) {
       </div>
       <div class="player-status-row">${statusText} · <span class="stat-energy">🔋${player.energy}</span> <span class="stat-ethics">⚖️${player.ethics}</span> <span class="stat-burnout">🔥${player.burnout}</span> · Pole: ${player.position}</div>
       <div class="player-props-mini">${propDots}</div>`;
-    list.appendChild(card);
+    fragment.appendChild(card);
   });
+  list.appendChild(fragment);
 }
 
 function renderPropertiesPanel(gs) {
-  const panel = document.getElementById('properties-panel');
+  const panel = getEl('properties-panel');
   if (!panel) return;
   panel.innerHTML = '';
+  const fragment = document.createDocumentFragment();
 
   const groups = {};
   Object.entries(GROUP_COLORS).forEach(([g]) => { groups[g] = []; });
@@ -2634,14 +3108,15 @@ function renderPropertiesPanel(gs) {
         <span class="prop-row-price">${space.price || ''}${space.price ? ' zł' : ''}</span>`;
       groupDiv.appendChild(row);
     });
-    panel.appendChild(groupDiv);
+    fragment.appendChild(groupDiv);
   });
+  panel.appendChild(fragment);
 
   if (!panel.innerHTML) panel.innerHTML = '<div style="opacity:.5;font-size:.8rem;padding:8px">Brak kupionych własności.</div>';
 }
 
 function renderLogPanel(gs) {
-  const list = document.getElementById('log-list');
+  const list = getEl('log-list');
   if (!list) return;
   const filterToTypes = {
     all: null,
@@ -2651,6 +3126,7 @@ function renderLogPanel(gs) {
   };
   const allowedTypes = filterToTypes[logFilterMode] || null;
   list.innerHTML = '';
+  const fragment = document.createDocumentFragment();
   gs.log
     .filter((entry) => !allowedTypes || allowedTypes.includes(entry.type || classifyLogType(entry.text, entry.isTurn)))
     .forEach(entry => {
@@ -2658,8 +3134,9 @@ function renderLogPanel(gs) {
     const type = entry.type || classifyLogType(entry.text, entry.isTurn);
     div.className = `log-entry log-type-${type}${entry.isTurn ? ' log-turn' : ''}`;
     div.textContent = entry.text;
-    list.appendChild(div);
+    fragment.appendChild(div);
     });
+  list.appendChild(fragment);
 }
 
 // ============================================================
@@ -2870,6 +3347,8 @@ function doRoll(gs) {
   }
 
   if (isDoubles) {
+    if (metaProgress) metaProgress.stats.totalDoubleRolls++;
+    if (currentRunStats) currentRunStats.doubledRolls++;
     gs.doubles++;
     if (gs.doubles >= 3) {
       addLog(gs, `${player.name} rzucił trzy dublety! Idzie do Izolacji.`);
@@ -2916,6 +3395,7 @@ function doMove(gs, player, steps) {
   startMoveAnimation(gs, player, oldPos, steps, () => {
     const newPos = (oldPos + steps) % 40;
     if (oldPos + steps >= 40) {
+      if (metaProgress) metaProgress.stats.totalPassGo++;
       applyPlayerDelta(gs, player, { money: activeBalanceProfile.goMoney, prestige: 2, energy: 1 }, 'START');
       addLog(gs, `${player.name} przeszedł przez START — bonus miesięczny (+${activeBalanceProfile.goMoney} zł, +2 prestiżu, +1 energii).`);
       showToast(`${player.name} przeszedł przez START! +${activeBalanceProfile.goMoney} zł / +2⭐ / +1🔋`);
@@ -3024,6 +3504,10 @@ function handlePropertyLanding(gs, player, space) {
       const rent = calculateRent(gs, space, propState);
       applyPlayerDelta(gs, player, { money: -rent, energy: -4, burnout: 3 }, 'czynsz i obciążenie');
       applyPlayerDelta(gs, owner, { money: rent, prestige: 1, energy: -1 }, 'obsługa kolejnego klienta');
+      if (metaProgress) {
+        metaProgress.stats.totalRentPaid += rent;
+        metaProgress.stats.totalRentReceived += rent;
+      }
       addLog(gs, `${player.name} zapłacił ${rent} zł czynszu graczowi ${owner.name}.`);
       showToast(`Czynsz: -${rent} zł → ${owner.name}`);
       playSfx('rent');
@@ -3063,6 +3547,7 @@ function sendToJail(gs, player) {
   player.jailTurns = 0;
   applyPlayerDelta(gs, player, { energy: -10, burnout: 10, prestige: -4 }, 'kryzys zawodowy');
   addLog(gs, `${player.name} trafia do Izolacji!`);
+  if (metaProgress) metaProgress.stats.totalJailVisits++;
   showToast(`${player.name} trafia do Izolacji! 🔒`);
   playSfx('jail');
 }
@@ -3071,6 +3556,7 @@ function sendToJail(gs, player) {
 // CARD DRAWING
 // ============================================================
 function doDrawCard(gs, player, deck) {
+  if (metaProgress) metaProgress.stats.totalCardsDrawn++;
   let card;
   animateCardDraw(deck);
   if (deck === 'insight') {
@@ -3278,6 +3764,7 @@ function doBuy(gs) {
   if (!player.properties.includes(spaceId)) player.properties.push(spaceId);
 
   addLog(gs, `${player.name} kupił ${space.name} za ${space.price} zł.`);
+  if (metaProgress) metaProgress.stats.totalPropertiesBought++;
   if (space.price >= 220) {
     recordTurningPoint(gs, {
       type: 'investment',
@@ -3355,6 +3842,7 @@ function doEndTurn(gs) {
   gs.phase              = 'rolling';
   gs.rolledThisTurn     = false;
   resetUndoForTurn(gs, 'Nowa tura: wykonaj akcję, aby odblokować cofnięcie.');
+  if (metaProgress) metaProgress.stats.turnsEnded++;
 
   const active = gs.players.filter(p => !p.bankrupt);
   if (active.length <= 1) {
@@ -3571,6 +4059,8 @@ function checkPlayerVitalStatus(gs, player) {
   if (!player || player.bankrupt) return;
   if (player.energy > 0 && player.ethics > 0 && player.burnout < CRITICAL_BURNOUT) return;
   player.bankrupt = true;
+  if (metaProgress) metaProgress.stats.bankruptcies++;
+  if (currentRunStats) currentRunStats.bankruptPlayers.add(player.id);
   if (player.energy <= 0) addLog(gs, `💥 ${player.name} odpada: energia spadła do zera.`);
   else if (player.ethics <= 0) addLog(gs, `⚠️ ${player.name} odpada: etyka spadła do zera.`);
   else addLog(gs, `🔥 ${player.name} odpada: krytyczne wypalenie.`);
@@ -3620,7 +4110,11 @@ function checkBankruptcy(gs, player, creditorId) {
   if (player.money >= 0) return;
 
   // Bankrupt
-  player.bankrupt = true;
+  if (!player.bankrupt) {
+    player.bankrupt = true;
+    if (metaProgress) metaProgress.stats.bankruptcies++;
+    if (currentRunStats) currentRunStats.bankruptPlayers.add(player.id);
+  }
   addLog(gs, `💀 ${player.name} zbankrutował!`);
   recordTurningPoint(gs, {
     type: 'bankruptcy',
@@ -3778,6 +4272,7 @@ function doBuildHouse(gs, player, spaceId) {
     showToast(`Dodano certyfikat na ${sp.name}!`);
     playSfx('build');
   }
+  if (metaProgress) metaProgress.stats.totalBuildActions++;
 }
 
 function doSellHouse(gs, player, spaceId) {
@@ -3861,6 +4356,7 @@ function doMortgage(gs, player, spaceId) {
   player.money += sp.mortgage;
   ps.mortgaged = true;
   addLog(gs, `${player.name} zastawił ${sp.name} za ${sp.mortgage} zł.`);
+  if (metaProgress) metaProgress.stats.totalMortgageActions++;
   showToast(`Zastawiono ${sp.name} +${sp.mortgage} zł`);
   playSfx('mortgage');
 }
@@ -3874,6 +4370,7 @@ function doUnmortgage(gs, player, spaceId) {
   player.money -= cost;
   ps.mortgaged = false;
   addLog(gs, `${player.name} odkupił ${sp.name} za ${cost} zł.`);
+  if (metaProgress) metaProgress.stats.totalMortgageActions++;
   showToast(`Odkupiono ${sp.name} -${cost} zł`);
   playSfx('mortgage');
 }

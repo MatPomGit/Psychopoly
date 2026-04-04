@@ -65,4 +65,5 @@ window.PSYCHOPOLY_DEFAULT_CONFIG = {
   balancePreset: 'standard',
   actionGuidanceEnabled: true,
   undoPerTurnLimit: 1,
+  performanceModeActive: false,
 };
