@@ -303,6 +303,7 @@ function rollDie() { return Math.floor(Math.random() * 6) + 1; }
 function deepCloneState(value) {
   if (typeof structuredClone === 'function') return structuredClone(value);
   return JSON.parse(JSON.stringify(value));
+}
 function getEl(id) {
   if (domCache.has(id)) {
     const cached = domCache.get(id);
@@ -1450,6 +1451,8 @@ function setupContextHelpLinks() {
     const target = link.getAttribute('data-help-target') || '';
     openHelpModal(target);
   });
+}
+
 function renderAchievementsScreen() {
   const container = document.getElementById('achievements-list');
   const summary = document.getElementById('achievements-summary');
