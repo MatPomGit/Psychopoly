@@ -538,6 +538,7 @@ html, body {
   box-shadow: 0 0 10px rgba(26,188,156,.3);
 }
 .tq-item.tq-bankrupt { opacity: .35; }
+.tq-item.tq-disconnected { opacity: .5; border-left: 2px solid #e67e22; }
 .tq-name {
   font-size: .78rem;
   font-weight: 700;
@@ -1161,6 +1162,7 @@ html, body {
   background: rgba(26,188,156,.08);
 }
 .player-card-panel.bankrupt { opacity: .4; }
+.player-card-panel.disconnected { opacity: .55; border-left-color: #e67e22; }
 .player-card-header {
   display: flex;
   align-items: center;

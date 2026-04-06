@@ -1712,6 +1712,7 @@ function setupOnlineLobbyHandlers() {
   });
 
   document.getElementById('btn-lobby-leave').addEventListener('click', () => {
+    try { localStorage.removeItem('psychopoly-reconnect'); } catch (_) {}
     if (socket) socket.disconnect();
     socket = null;
     resetLobbyUI();
@@ -1901,8 +1902,18 @@ function initSocket() {
   socket.on('connect', () => {
     console.log('[socket] connected', socket.id);
     setConnectionStatus('połączono');
-    if (currentRoomId && myPlayerName) {
-      showToast('Połączono ponownie z serwerem. Jeśli byłeś(-aś) w lobby, dołącz ponownie do pokoju.');
+    // Attempt automatic session recovery using stored reconnect token
+    try {
+      const saved = JSON.parse(localStorage.getItem('psychopoly-reconnect') || 'null');
+      if (saved && saved.roomId && saved.reconnectToken && !currentRoomId) {
+        socket.emit('reconnect-room', { roomId: saved.roomId, playerId: saved.playerId, token: saved.reconnectToken });
+      } else if (currentRoomId && myPlayerName) {
+        showToast('Połączono ponownie z serwerem.');
+      }
+    } catch (_) {
+      if (currentRoomId && myPlayerName) {
+        showToast('Połączono ponownie z serwerem.');
+      }
     }
   });
 
@@ -1940,20 +1951,26 @@ function initSocket() {
     showToast('Problem z połączeniem. Trwa ponawianie...');
   });
 
-  socket.on('room-created', ({ roomId, playerId, players, modeKey }) => {
+  socket.on('room-created', ({ roomId, playerId, reconnectToken, players, modeKey }) => {
     currentRoomId = roomId;
     myPlayerId    = playerId;
     isHost        = true;
     myReady       = false;
+    if (reconnectToken) {
+      try { localStorage.setItem('psychopoly-reconnect', JSON.stringify({ roomId, playerId, reconnectToken })); } catch (_) {}
+    }
     if (modeKey) selectedOnlineMatchMode = getMatchModeKey(modeKey);
     showLobbyWaiting(roomId, players, true, selectedOnlineMatchMode);
   });
 
-  socket.on('room-joined', ({ roomId, playerId, players, modeKey }) => {
+  socket.on('room-joined', ({ roomId, playerId, reconnectToken, players, modeKey }) => {
     currentRoomId = roomId;
     myPlayerId    = playerId;
     isHost        = false;
     myReady       = false;
+    if (reconnectToken) {
+      try { localStorage.setItem('psychopoly-reconnect', JSON.stringify({ roomId, playerId, reconnectToken })); } catch (_) {}
+    }
     if (modeKey) selectedOnlineMatchMode = getMatchModeKey(modeKey);
     showLobbyWaiting(roomId, players, false, selectedOnlineMatchMode);
   });
@@ -1979,6 +1996,13 @@ function initSocket() {
     if (gameMode === 'online') {
       applyOnlineState(gs);
     }
+  });
+
+  socket.on('reconnect-success', ({ roomId, playerId }) => {
+    currentRoomId = roomId;
+    myPlayerId    = playerId;
+    showToast('Połączono ponownie z grą!');
+    // game-started or room-state will follow from server to restore the view
   });
 
   socket.on('chat-message', ({ name, text }) => {
@@ -2388,6 +2412,7 @@ function setupGameHandlers() {
   if (btnExitToMenu) {
     btnExitToMenu.addEventListener('click', () => {
       if (!window.confirm('Wyjść do menu głównego? Aktualna gra zostanie utracona.')) return;
+      try { localStorage.removeItem('psychopoly-reconnect'); } catch (_) {}
       if (socket) socket.disconnect();
       socket = null;
       gameMode = null;
@@ -3127,7 +3152,7 @@ function updateTurnQueue(gs) {
     const isCurrent = i === 0;
 
     const item = document.createElement('div');
-    item.className = `tq-item${isCurrent ? ' tq-current' : ''}${player.bankrupt ? ' tq-bankrupt' : ''}`;
+    item.className = `tq-item${isCurrent ? ' tq-current' : ''}${player.bankrupt ? ' tq-bankrupt' : ''}${player.disconnected ? ' tq-disconnected' : ''}`;
 
     item.innerHTML = `
       <div class="player-token-sm" style="background:${player.color}; background-image:url('${getPawnIcon(player.pawn)}')">${getInitial(player.name)}</div>
@@ -3156,6 +3181,7 @@ function showPlayerStatsTooltip(player, anchorEl) {
 
   const ownedCount = (player.properties || []).length;
   const jailStatus = player.bankrupt ? '💀 Odpadł' :
+                     player.disconnected ? '🔌 Rozłączony' :
                      player.inJail   ? `🔒 Izolacja (${player.jailTurns}/${MAX_JAIL_TURNS})` : '';
 
   tooltip.innerHTML = `
@@ -3188,7 +3214,7 @@ function renderPlayersPanel(gs) {
   const fragment = document.createDocumentFragment();
   gs.players.forEach((player, i) => {
     const card = document.createElement('div');
-    card.className = `player-card-panel${i === gs.currentPlayerIndex ? ' active-turn' : ''}${player.bankrupt ? ' bankrupt' : ''}`;
+    card.className = `player-card-panel${i === gs.currentPlayerIndex ? ' active-turn' : ''}${player.bankrupt ? ' bankrupt' : ''}${player.disconnected ? ' disconnected' : ''}`;
     const propDots = player.properties.map(spaceId => {
       const sp = ACTIVE_BOARD_SPACES[spaceId];
       const color = sp && sp.group ? GROUP_COLORS[sp.group] : '#999';
@@ -3196,6 +3222,7 @@ function renderPlayersPanel(gs) {
     }).join('');
 
     const statusText = player.bankrupt ? '💀 ODPADŁ' :
+                       player.disconnected ? '🔌 ROZŁĄCZONY' :
                        player.inJail   ? `🔒 Izolacja (${player.jailTurns}/${MAX_JAIL_TURNS})` :
                        player.getOutOfJailCards > 0 ? `🎫 ×${player.getOutOfJailCards}` : '';
 
