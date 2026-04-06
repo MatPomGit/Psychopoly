@@ -79,12 +79,13 @@ io.on('connection', (socket) => {
     }
     const roomId = generateRoomId();
     const playerId = 0;
+    const reconnectToken = crypto.randomBytes(16).toString('hex');
 
     const roomState = {
       id: roomId,
       hostSocketId: socket.id,
       modeKey: sanitizeModeKey(modeKey),
-      players: [{ socketId: socket.id, playerId, name: profile.name, color: profile.color, pawn: profile.pawn, ready: false }],
+      players: [{ socketId: socket.id, playerId, name: profile.name, color: profile.color, pawn: profile.pawn, ready: false, reconnectToken }],
       gameState: null,
       started: false,
     };
@@ -98,6 +99,7 @@ io.on('connection', (socket) => {
     socket.emit('room-created', {
       roomId,
       playerId,
+      reconnectToken,
       modeKey: roomState.modeKey,
       players: roomState.players.map(p => ({ playerId: p.playerId, name: p.name, color: p.color, pawn: p.pawn, ready: p.ready })),
     });
@@ -144,15 +146,16 @@ io.on('connection', (socket) => {
       return;
     }
     const playerId = room.players.length;
+    const reconnectToken = crypto.randomBytes(16).toString('hex');
 
-    room.players.push({ socketId: socket.id, playerId, name: profile.name, color: profile.color, pawn: profile.pawn, ready: false });
+    room.players.push({ socketId: socket.id, playerId, name: profile.name, color: profile.color, pawn: profile.pawn, ready: false, reconnectToken });
     socket.join(roomId);
     socket.data.roomId = roomId;
     socket.data.playerId = playerId;
     socket.data.playerName = profile.name;
 
     const playerList = room.players.map(p => ({ playerId: p.playerId, name: p.name, color: p.color, pawn: p.pawn, ready: p.ready }));
-    socket.emit('room-joined', { roomId, playerId, modeKey: room.modeKey, players: playerList });
+    socket.emit('room-joined', { roomId, playerId, reconnectToken, modeKey: room.modeKey, players: playerList });
     emitRoomState(room);
     console.log(`[join-room] ${profile.name} joined ${roomId} as player ${playerId}`);
   });
@@ -261,9 +264,65 @@ io.on('connection', (socket) => {
         if (gs.players[pIdx]) {
           gs.players[pIdx].disconnected = true;
           addLog(gs, `${gs.players[pIdx].name} rozłączył się.`);
+
+          // If it's the disconnected player's turn, auto-advance to prevent the game from freezing
+          if (gs.currentPlayerIndex === pIdx && gs.phase !== 'end') {
+            if (gs.phase === 'buying') {
+              gs.pendingBuy = null;
+              gs.phase = 'end-turn';
+            } else if (gs.phase === 'card') {
+              if (gs.pendingCard) applyCard(gs, gs.players[pIdx], gs.pendingCard.card);
+              gs.pendingCard = null;
+              gs.phase = 'end-turn';
+            } else if (gs.phase === 'rolling') {
+              gs.phase = 'end-turn';
+            }
+            handleEndTurn(gs);
+          }
         }
         io.to(roomId).emit('game-state', sanitizeState(gs));
       }
+    }
+  });
+
+  // ----------------------------------------------------------
+  // reconnect-room: { roomId, playerId, token }
+  // ----------------------------------------------------------
+  socket.on('reconnect-room', ({ roomId, playerId, token }) => {
+    const room = rooms.get(roomId);
+    if (!room) {
+      socket.emit('error', { message: 'Pokój nie istnieje lub wygasł.' });
+      return;
+    }
+    const pid = Number(playerId);
+    const player = room.players.find(p => p.playerId === pid && p.reconnectToken === token);
+    if (!player) {
+      socket.emit('error', { message: 'Nieprawidłowy token – nie można wznowić połączenia.' });
+      return;
+    }
+
+    // Restore socket association
+    player.socketId = socket.id;
+    socket.join(roomId);
+    socket.data.roomId = roomId;
+    socket.data.playerId = pid;
+    socket.data.playerName = player.name;
+
+    if (room.started && room.gameState) {
+      const gs = room.gameState;
+      if (gs.players[pid]) {
+        gs.players[pid].disconnected = false;
+        addLog(gs, `${gs.players[pid].name} wrócił do gry.`);
+      }
+      socket.emit('reconnect-success', { roomId, playerId: pid, inGame: true });
+      // Re-send game-started so client rebuilds its game view
+      socket.emit('game-started', sanitizeState(gs));
+      io.to(roomId).emit('game-state', sanitizeState(gs));
+      console.log(`[reconnect-room] ${player.name} rejoined ${roomId}`);
+    } else {
+      socket.emit('reconnect-success', { roomId, playerId: pid, inGame: false });
+      emitRoomState(room);
+      console.log(`[reconnect-room] ${player.name} rejoined lobby ${roomId}`);
     }
   });
 });
@@ -852,7 +911,7 @@ function handleEndTurn(gs) {
 
   let next = (gs.currentPlayerIndex + 1) % gs.players.length;
   let loops = 0;
-  while (gs.players[next].bankrupt && loops < gs.players.length) {
+  while ((gs.players[next].bankrupt || gs.players[next].disconnected) && loops < gs.players.length) {
     next = (next + 1) % gs.players.length;
     loops++;
   }
