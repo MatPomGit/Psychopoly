@@ -239,6 +239,7 @@
           <div class="action-section-title">Zarządzanie</div>
           <button id="btn-build"    class="btn btn-success  btn-full" style="display:none">📜 Rozwijaj / Redukuj</button>
           <button id="btn-mortgage" class="btn btn-warning  btn-full" style="display:none">📋 Zastaw / Odkup</button>
+          <button id="btn-trade" class="btn btn-secondary btn-full" style="display:none">🤝 Handel</button>
         </div>
 
         <div class="action-section">
@@ -389,6 +390,67 @@
     </div>
     <div class="modal-actions">
       <button id="btn-mortgage-close" class="btn btn-secondary btn-full">Zamknij</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     MODAL: Trade offer creation
+     ============================================================ -->
+<div id="modal-trade" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-trade-title" aria-describedby="trade-offer-builder" aria-hidden="true">
+  <div class="modal-box trade-modal-box">
+    <div id="modal-trade-title" class="modal-title">🤝 Nowa oferta transakcji</div>
+    <div class="modal-body">
+      <div id="trade-block-reason" class="trade-block-reason" style="display:none"></div>
+      <div class="form-group">
+        <label for="trade-target-player">Partner transakcji</label>
+        <select id="trade-target-player"></select>
+      </div>
+      <div id="trade-offer-builder" class="trade-builder-grid">
+        <section class="trade-side">
+          <h4>Co daję</h4>
+          <div class="form-group">
+            <label for="trade-give-money">Gotówka (zł)</label>
+            <input id="trade-give-money" type="number" min="0" step="10" value="0">
+          </div>
+          <div class="form-group">
+            <label><input id="trade-give-card" type="checkbox"> Karta wyjścia z Izolacji</label>
+          </div>
+          <div id="trade-give-properties" class="trade-properties-list"></div>
+        </section>
+        <section class="trade-side">
+          <h4>Co chcę</h4>
+          <div class="form-group">
+            <label for="trade-want-money">Gotówka (zł)</label>
+            <input id="trade-want-money" type="number" min="0" step="10" value="0">
+          </div>
+          <div class="form-group">
+            <label><input id="trade-want-card" type="checkbox"> Karta wyjścia z Izolacji</label>
+          </div>
+          <div id="trade-want-properties" class="trade-properties-list"></div>
+        </section>
+      </div>
+      <div id="trade-validation-msg" class="trade-validation-msg"></div>
+    </div>
+    <div class="modal-actions">
+      <button id="btn-trade-cancel" class="btn btn-outline">Anuluj</button>
+      <button id="btn-trade-send" class="btn btn-success">Wyślij ofertę</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     MODAL: Trade offer accept/reject
+     ============================================================ -->
+<div id="modal-trade-accept" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-trade-accept-title" aria-describedby="trade-accept-summary" aria-hidden="true">
+  <div class="modal-box trade-modal-box">
+    <div id="modal-trade-accept-title" class="modal-title">✅ Akceptacja transakcji</div>
+    <div class="modal-body">
+      <div id="trade-accept-summary" class="trade-accept-summary"></div>
+    </div>
+    <div class="modal-actions">
+      <button id="btn-trade-reject" class="btn btn-danger">Odrzuć</button>
+      <button id="btn-trade-accept" class="btn btn-success">Akceptuj</button>
     </div>
   </div>
 </div>
