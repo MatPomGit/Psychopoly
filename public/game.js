@@ -146,6 +146,7 @@ let metaProgress = null;
 let seasonJournal = null;
 let currentRunStats = null;
 let endgameMetaRecorded = false;
+let activeTradeDraft = null;
 
 const ACHIEVEMENTS = [
   { id: 'first_steps', name: 'Pierwsze kroki', description: 'Ukończ 1 partię.', condition: (ctx) => ctx.profile.stats.gamesPlayed >= 1 },
@@ -2098,6 +2099,7 @@ function createGameState(playerConfigs, matchProfile) {
     pendingCard:     null,
     pendingCardDeck: null,
     pendingBuy:      null,
+    pendingTradeOffer: null,
     rolledThisTurn:  false,
     analytics:       { snapshots: [], events: [] },
     undo:            {
@@ -2297,6 +2299,12 @@ function setupGameHandlers() {
     openMortgageModal(localGame);
   });
 
+  // Trade
+  document.getElementById('btn-trade').addEventListener('click', () => {
+    if (!localGame) return;
+    openTradeModal(localGame);
+  });
+
   // Card OK
   document.getElementById('btn-card-ok').addEventListener('click', () => {
     if (!localGame) return;
@@ -2348,6 +2356,31 @@ function setupGameHandlers() {
     closeModal('modal-mortgage');
     if (localGame) updateUI(localGame);
   });
+
+  document.getElementById('btn-trade-cancel').addEventListener('click', () => {
+    closeModal('modal-trade');
+    activeTradeDraft = null;
+  });
+  document.getElementById('btn-trade-send').addEventListener('click', () => {
+    if (!localGame) return;
+    submitTradeOffer(localGame);
+  });
+  document.getElementById('btn-trade-reject').addEventListener('click', () => {
+    if (!localGame) return;
+    rejectTradeOffer(localGame);
+  });
+  document.getElementById('btn-trade-accept').addEventListener('click', () => {
+    if (!localGame) return;
+    acceptTradeOffer(localGame);
+  });
+
+  const tradeTargetSelect = document.getElementById('trade-target-player');
+  if (tradeTargetSelect) {
+    tradeTargetSelect.addEventListener('change', () => {
+      if (!localGame) return;
+      renderTradeEditor(localGame);
+    });
+  }
 
   // Chat drawer toggle
   const drawerToggle = document.getElementById('chat-drawer-toggle');
@@ -3337,6 +3370,7 @@ function updateActionButtons(gs) {
     'btn-end-turn',
     'btn-build',
     'btn-mortgage',
+    'btn-trade',
   ];
 
   function setDisabledReason(button, reason) {
@@ -3432,8 +3466,10 @@ function updateActionButtons(gs) {
 
   const btnBuild    = document.getElementById('btn-build');
   const btnMortgage = document.getElementById('btn-mortgage');
+  const btnTrade    = document.getElementById('btn-trade');
   btnBuild.style.display    = canManage && hasProps ? 'flex' : 'none';
   btnMortgage.style.display = canManage && hasProps ? 'flex' : 'none';
+  btnTrade.style.display    = canManage ? 'flex' : 'none';
 
   const managementDisabledReason = !myTurn
     ? 'To nie jest Twoja tura.'
@@ -3444,6 +3480,9 @@ function updateActionButtons(gs) {
         : 'Zarządzanie aktywami dostępne tylko na początku lub końcu tury.';
   setDisabledReason(btnBuild, managementDisabledReason);
   setDisabledReason(btnMortgage, managementDisabledReason);
+  const tradeBlockReason = getTradeBlockReason(gs, cur);
+  btnTrade.disabled = !canManage || !!tradeBlockReason;
+  setDisabledReason(btnTrade, !canManage ? managementDisabledReason : (tradeBlockReason || ''));
 
   if (!curIsAI) {
     if (myTurn && phase === 'rolling') {
@@ -4547,6 +4586,263 @@ function doUnmortgage(gs, player, spaceId) {
   if (metaProgress) metaProgress.stats.totalMortgageActions++;
   showToast(`Odkupiono ${sp.name} -${cost} zł`);
   playSfx('mortgage');
+}
+
+function getTradeBlockReason(gs, player) {
+  if (!gs || !player) return 'Brak danych gracza.';
+  if (gs.phase === 'end') return 'Gra jest zakończona.';
+  if (player.bankrupt) return 'Bankrut nie może handlować.';
+  if (player.inJail) return 'Gracz w Izolacji nie może handlować.';
+  if (player.energy <= 0 || player.ethics <= 0 || player.burnout >= CRITICAL_BURNOUT) {
+    return 'Stan gracza uniemożliwia zawieranie transakcji.';
+  }
+  return '';
+}
+
+function getTradeableProperties(gs, ownerId) {
+  if (!gs) return [];
+  return Object.entries(gs.properties || {})
+    .filter(([spaceId, ps]) => ps && ps.owner === ownerId)
+    .map(([spaceId]) => Number(spaceId))
+    .filter((spaceId) => Number.isInteger(spaceId) && !!ACTIVE_BOARD_SPACES[spaceId]);
+}
+
+function renderTradePropertyOptions(container, spaces, groupName, selected = []) {
+  if (!container) return;
+  container.innerHTML = '';
+  if (!spaces.length) {
+    container.innerHTML = '<div class="setup-help">Brak aktywów do wymiany.</div>';
+    return;
+  }
+  spaces.forEach((spaceId) => {
+    const space = ACTIVE_BOARD_SPACES[spaceId];
+    if (!space) return;
+    const row = document.createElement('label');
+    row.className = 'trade-property-option';
+    row.innerHTML = `<input type="checkbox" name="${groupName}" value="${spaceId}" ${selected.includes(spaceId) ? 'checked' : ''}> ${escHtml(space.name)}`;
+    container.appendChild(row);
+  });
+}
+
+function renderTradeEditor(gs) {
+  const from = gs.players[gs.currentPlayerIndex];
+  const targetSelect = document.getElementById('trade-target-player');
+  if (!from || !targetSelect) return;
+  const targetId = Number(targetSelect.value);
+  const to = gs.players.find((p) => p.id === targetId);
+  const blockReason = getTradeBlockReason(gs, from) || getTradeBlockReason(gs, to);
+  const blockEl = document.getElementById('trade-block-reason');
+  if (blockEl) {
+    blockEl.style.display = blockReason ? 'block' : 'none';
+    blockEl.textContent = blockReason || '';
+  }
+  const giveSpaces = getTradeableProperties(gs, from.id);
+  const wantSpaces = to ? getTradeableProperties(gs, to.id) : [];
+  renderTradePropertyOptions(document.getElementById('trade-give-properties'), giveSpaces, 'trade-give-prop');
+  renderTradePropertyOptions(document.getElementById('trade-want-properties'), wantSpaces, 'trade-want-prop');
+  const giveCard = document.getElementById('trade-give-card');
+  const wantCard = document.getElementById('trade-want-card');
+  if (giveCard) {
+    giveCard.checked = false;
+    giveCard.disabled = from.getOutOfJailCards <= 0;
+  }
+  if (wantCard) {
+    wantCard.checked = false;
+    wantCard.disabled = !to || to.getOutOfJailCards <= 0;
+  }
+}
+
+function openTradeModal(gs) {
+  if (gameMode !== 'local') {
+    showToast('Handel jest obecnie dostępny wyłącznie w trybie lokalnym.');
+    return;
+  }
+  const from = gs.players[gs.currentPlayerIndex];
+  if (!from) return;
+  const reason = getTradeBlockReason(gs, from);
+  if (reason) {
+    showToast(reason);
+    return;
+  }
+
+  const targetSelect = document.getElementById('trade-target-player');
+  if (!targetSelect) return;
+  targetSelect.innerHTML = '';
+  gs.players.forEach((p) => {
+    if (p.id === from.id || p.bankrupt) return;
+    const option = document.createElement('option');
+    option.value = String(p.id);
+    option.textContent = p.name;
+    targetSelect.appendChild(option);
+  });
+  if (!targetSelect.options.length) {
+    showToast('Brak dostępnych partnerów transakcji.');
+    return;
+  }
+
+  document.getElementById('trade-give-money').value = '0';
+  document.getElementById('trade-want-money').value = '0';
+  const validationEl = document.getElementById('trade-validation-msg');
+  if (validationEl) validationEl.textContent = '';
+
+  renderTradeEditor(gs);
+  openModal('modal-trade');
+}
+
+function collectTradeModel(gs) {
+  const from = gs.players[gs.currentPlayerIndex];
+  const targetId = Number(document.getElementById('trade-target-player')?.value);
+  const giveMoney = Math.max(0, Number(document.getElementById('trade-give-money')?.value) || 0);
+  const wantMoney = Math.max(0, Number(document.getElementById('trade-want-money')?.value) || 0);
+  const givePropertyIds = Array.from(document.querySelectorAll('input[name="trade-give-prop"]:checked')).map((el) => Number(el.value));
+  const wantPropertyIds = Array.from(document.querySelectorAll('input[name="trade-want-prop"]:checked')).map((el) => Number(el.value));
+  return {
+    id: `trade-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    fromId: from ? from.id : null,
+    toId: targetId,
+    createdAt: Date.now(),
+    status: 'sent',
+    give: {
+      money: giveMoney,
+      propertyIds: givePropertyIds,
+      getOutOfJailCard: !!document.getElementById('trade-give-card')?.checked,
+    },
+    want: {
+      money: wantMoney,
+      propertyIds: wantPropertyIds,
+      getOutOfJailCard: !!document.getElementById('trade-want-card')?.checked,
+    },
+  };
+}
+
+function validateTradeOffer(gs, offer) {
+  if (!gs || !offer) return { valid: false, reason: 'Brak oferty.' };
+  const from = gs.players.find((p) => p.id === offer.fromId);
+  const to = gs.players.find((p) => p.id === offer.toId);
+  if (!from || !to) return { valid: false, reason: 'Nie znaleziono uczestników transakcji.' };
+  if (from.id === to.id) return { valid: false, reason: 'Nie możesz handlować sam ze sobą.' };
+  const blockReason = getTradeBlockReason(gs, from) || getTradeBlockReason(gs, to);
+  if (blockReason) return { valid: false, reason: blockReason };
+  if (offer.give.money > from.money) return { valid: false, reason: `${from.name} nie ma tylu środków.` };
+  if (offer.want.money > to.money) return { valid: false, reason: `${to.name} nie ma tylu środków.` };
+  if (offer.give.getOutOfJailCard && from.getOutOfJailCards <= 0) return { valid: false, reason: `${from.name} nie ma karty.` };
+  if (offer.want.getOutOfJailCard && to.getOutOfJailCards <= 0) return { valid: false, reason: `${to.name} nie ma karty.` };
+  const fromProps = new Set(getTradeableProperties(gs, from.id));
+  const toProps = new Set(getTradeableProperties(gs, to.id));
+  if (offer.give.propertyIds.some((spaceId) => !fromProps.has(spaceId))) return { valid: false, reason: 'W ofercie są aktywa, których nie posiadasz.' };
+  if (offer.want.propertyIds.some((spaceId) => !toProps.has(spaceId))) return { valid: false, reason: 'W ofercie są aktywa, których partner nie posiada.' };
+  const hasAnyAsset = offer.give.money > 0 || offer.want.money > 0
+    || offer.give.getOutOfJailCard || offer.want.getOutOfJailCard
+    || offer.give.propertyIds.length > 0 || offer.want.propertyIds.length > 0;
+  if (!hasAnyAsset) return { valid: false, reason: 'Oferta jest pusta.' };
+  return { valid: true, reason: '' };
+}
+
+function summarizeTradeSide(player, side) {
+  const parts = [];
+  if (side.money > 0) parts.push(`${side.money} zł`);
+  if (side.getOutOfJailCard) parts.push('karta wyjścia z Izolacji');
+  (side.propertyIds || []).forEach((spaceId) => {
+    const space = ACTIVE_BOARD_SPACES[spaceId];
+    if (space) parts.push(space.name);
+  });
+  if (!parts.length) return `${player.name}: (nic)`;
+  return `${player.name}: ${parts.join(', ')}`;
+}
+
+function submitTradeOffer(gs) {
+  const offer = collectTradeModel(gs);
+  const validation = validateTradeOffer(gs, offer);
+  const validationEl = document.getElementById('trade-validation-msg');
+  if (!validation.valid) {
+    if (validationEl) validationEl.textContent = validation.reason;
+    return;
+  }
+  gs.pendingTradeOffer = { ...offer, status: 'awaiting-acceptance' };
+  activeTradeDraft = gs.pendingTradeOffer;
+  closeModal('modal-trade');
+  const from = gs.players.find((p) => p.id === offer.fromId);
+  const to = gs.players.find((p) => p.id === offer.toId);
+  addLog(gs, `🤝 ${from.name} wysłał ofertę transakcji do ${to.name}.`, false, 'money');
+  openTradeAcceptModal(gs);
+  updateUI(gs);
+}
+
+function openTradeAcceptModal(gs) {
+  const offer = gs.pendingTradeOffer;
+  if (!offer) return;
+  const from = gs.players.find((p) => p.id === offer.fromId);
+  const to = gs.players.find((p) => p.id === offer.toId);
+  if (!from || !to) return;
+  const summary = document.getElementById('trade-accept-summary');
+  if (summary) {
+    summary.innerHTML = `
+      <strong>${escHtml(to.name)}</strong>, akceptujesz ofertę od <strong>${escHtml(from.name)}</strong>?<br><br>
+      ${escHtml(summarizeTradeSide(from, offer.give))}<br>
+      ${escHtml(summarizeTradeSide(to, offer.want))}
+    `;
+  }
+  openModal('modal-trade-accept');
+}
+
+function transferPropertyOwnership(gs, spaceId, oldOwnerId, newOwnerId) {
+  const prop = gs.properties[spaceId];
+  if (!prop || prop.owner !== oldOwnerId) return;
+  const oldOwner = gs.players.find((p) => p.id === oldOwnerId);
+  const newOwner = gs.players.find((p) => p.id === newOwnerId);
+  if (!oldOwner || !newOwner) return;
+  oldOwner.properties = (oldOwner.properties || []).filter((id) => id !== spaceId);
+  if (!newOwner.properties.includes(spaceId)) newOwner.properties.push(spaceId);
+  prop.owner = newOwnerId;
+}
+
+function acceptTradeOffer(gs) {
+  const offer = gs.pendingTradeOffer;
+  if (!offer) return;
+  const validation = validateTradeOffer(gs, offer);
+  if (!validation.valid) {
+    showToast(`Transakcja anulowana: ${validation.reason}`);
+    closeModal('modal-trade-accept');
+    gs.pendingTradeOffer = null;
+    activeTradeDraft = null;
+    updateUI(gs);
+    return;
+  }
+  const from = gs.players.find((p) => p.id === offer.fromId);
+  const to = gs.players.find((p) => p.id === offer.toId);
+  from.money -= offer.give.money;
+  to.money += offer.give.money;
+  to.money -= offer.want.money;
+  from.money += offer.want.money;
+  if (offer.give.getOutOfJailCard) {
+    from.getOutOfJailCards -= 1;
+    to.getOutOfJailCards += 1;
+  }
+  if (offer.want.getOutOfJailCard) {
+    to.getOutOfJailCards -= 1;
+    from.getOutOfJailCards += 1;
+  }
+  offer.give.propertyIds.forEach((spaceId) => transferPropertyOwnership(gs, spaceId, from.id, to.id));
+  offer.want.propertyIds.forEach((spaceId) => transferPropertyOwnership(gs, spaceId, to.id, from.id));
+  gs.pendingTradeOffer = null;
+  activeTradeDraft = null;
+  closeModal('modal-trade-accept');
+  addLog(gs, `✅ Finalna transakcja: ${summarizeTradeSide(from, offer.give)} ↔ ${summarizeTradeSide(to, offer.want)}.`, false, 'money');
+  showToast('Transakcja zaakceptowana.');
+  updateUI(gs);
+}
+
+function rejectTradeOffer(gs) {
+  const offer = gs.pendingTradeOffer;
+  if (!offer) return;
+  const from = gs.players.find((p) => p.id === offer.fromId);
+  const to = gs.players.find((p) => p.id === offer.toId);
+  addLog(gs, `❌ ${to ? to.name : 'Gracz'} odrzucił ofertę transakcji od ${from ? from.name : 'gracza'}.`, false, 'turn');
+  gs.pendingTradeOffer = null;
+  activeTradeDraft = null;
+  closeModal('modal-trade-accept');
+  showToast('Oferta została odrzucona.');
+  updateUI(gs);
 }
 
 // ============================================================

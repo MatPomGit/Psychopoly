@@ -1690,6 +1690,47 @@ body.performance-mode * {
   font-size: .82rem;
 }
 
+/* Trade modal */
+.trade-modal-box {
+  max-width: 760px;
+}
+.trade-builder-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.trade-side {
+  border: 1px solid rgba(26,42,74,.14);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(26,42,74,.03);
+}
+.trade-side h4 {
+  margin-bottom: 8px;
+  color: var(--navy-dark);
+}
+.trade-properties-list {
+  max-height: 150px;
+  overflow-y: auto;
+  border-top: 1px solid rgba(26,42,74,.1);
+  padding-top: 6px;
+}
+.trade-property-option {
+  display: block;
+  margin-bottom: 4px;
+  font-size: .8rem;
+}
+.trade-validation-msg,
+.trade-block-reason {
+  margin-top: 8px;
+  font-size: .8rem;
+  color: #b03a2e;
+}
+.trade-accept-summary {
+  font-size: .92rem;
+  line-height: 1.5;
+}
+
 /* ============================================================
    GAME OVER SCREEN
    ============================================================ */
